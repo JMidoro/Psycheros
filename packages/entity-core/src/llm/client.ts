@@ -132,10 +132,17 @@ export class LLMClient {
     // Sometimes models wrap JSON in markdown code blocks
     let jsonStr = response.trim();
 
-    // Remove markdown code blocks if present
-    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim();
+    // Remove markdown code fences if present. Handle both fences (matched pair)
+    // and the case where the model emits only an opening fence (or truncates
+    // before the closing one) — strip each fence independently.
+    const fencedMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fencedMatch) {
+      jsonStr = fencedMatch[1].trim();
+    } else {
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, "").replace(
+        /\n?```\s*$/,
+        "",
+      ).trim();
     }
 
     try {

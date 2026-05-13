@@ -616,16 +616,19 @@ export class DBClient {
     let params: (string | number)[];
 
     if (options?.before) {
+      // Scroll-back load: fetch the N most recent messages strictly older than
+      // the cursor (DESC), so the batch hugs the cursor instead of jumping to
+      // the oldest end of the range. Reversed below for display order.
       query = `SELECT id, conversation_id, role, content, reasoning_content,
                       tool_call_id, tool_calls, created_at, edited_at,
                       pulse_id, pulse_name
                FROM messages
                WHERE conversation_id = ? AND created_at < ?
-               ORDER BY created_at ASC
+               ORDER BY created_at DESC
                LIMIT ?`;
       params = [conversationId, options.before, limit + 1];
     } else {
-      // Initial load: fetch the most recent messages (DESC), then reverse to ASC
+      // Initial load: fetch the most recent messages (DESC). Reversed below.
       query = `SELECT id, conversation_id, role, content, reasoning_content,
                       tool_call_id, tool_calls, created_at, edited_at,
                       pulse_id, pulse_name
@@ -643,10 +646,10 @@ export class DBClient {
     const hasMore = rows.length > limit;
     const limitedRows = hasMore ? rows.slice(0, limit) : rows;
 
-    // Reverse to ASC order (the initial load queried DESC, scroll-back loads are already ASC)
-    const orderedRows = options?.before
-      ? limitedRows
-      : [...limitedRows].reverse();
+    // Both branches query DESC (newest-first); reverse to ASC for display so
+    // orderedRows[0] is the oldest in the batch — which the route uses as the
+    // next `oldestCreatedAt` cursor for further scroll-back.
+    const orderedRows = [...limitedRows].reverse();
 
     return {
       messages: orderedRows.map((row) => this.rowToMessage(row)),

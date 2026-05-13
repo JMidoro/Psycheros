@@ -25,50 +25,69 @@ publish a new patch version; we don't move or delete release tags.
 
 ## Cutting a release
 
-Every release is operator-initiated. All release/publish workflows are
-manual-dispatch by design — there is no auto-release on push, merge, or tag
-creation.
+Releases are **maintainer-initiated and operator-curated**. There is no
+auto-release on push, merge, or branch activity — but signed annotated tag
+pushes **do auto-fire the corresponding artifact workflows** (see "What
+auto-fires on tag push" below). The maintainer's act is pushing the tag;
+everything downstream of that is mechanical.
 
-The flow:
+### A release event is a sweep across all four packages
 
-1. **Land the change on `main`** (via PR or direct push to the curated tree).
-2. **Bump the package's `deno.json` version** to match the version you're about
-   to tag. Commit and push.
-3. **Tag the commit** with the appropriate `<package>-v<ver>` form and push the
-   tag to origin.
-4. **Create a GitHub Release** at the tag with release notes (the "Generate
-   release notes" button gives you a reasonable starting point).
-5. **Dispatch the workflows** that correspond to the package.
+Each of the four packages has an **independent semver lineage**. A release
+event is not a single-package decision — it's a survey across all four,
+producing 0–N tag-cuts depending on which packages are ready to ship.
 
-### `launcher-v*`, `entity-core-v*`, `entity-loom-v*`
+Per release event, each package is in one of three states:
 
-```bash
-gh workflow run release.yml --ref entity-core-v0.1.0
-```
+| State | Condition | Action |
+|---|---|---|
+| **CLEAN** | `packages/<pkg>/deno.json:version` on `main` equals the version in the most recent `<pkg>-v*` tag, and the `packages/<pkg>/` source tree matches what that tag points at | Skip this package this cycle |
+| **PENDING_TAG** | `deno.json:version` on `main` is greater than the latest tag | Cut `<pkg>-v<version>` |
+| **DRIFT** | versions equal, source tree differs | Bump `packages/<pkg>/deno.json`'s `version` field on `main`, then cut the tag |
 
-The `release` workflow routes to exactly one job based on the tag prefix and
-uploads the package's artifacts to the Release. Non-matching jobs skip.
+**Drift policy is a soft warning.** A drifted package does not block other
+packages from being released. Maintainers may have valid reasons to keep a
+package drifted across multiple release cycles (in-progress work not yet
+ready for consumption). Surface drift; don't force resolution.
 
-- **launcher** uploads the bundle (zip + tarball) plus raw `dashboard.ts`,
-  `run.sh`, `run.ps1` for direct `curl`/`iwr` consumption.
-- **entity-core** and **entity-loom** upload a scoped source tarball + zip
-  containing only their `packages/<name>/` subtree, renamed to `<tag>.tar.gz` /
-  `<tag>.zip` at the top level.
+**Version bumps are part of the release decision, not a precondition for
+work.** Source changes accumulate on `main` between releases; the version
+bump happens at release time, when the maintainer decides how the change
+maps to semver weight (PATCH for fixes, MINOR for backwards-compatible
+additions, MAJOR for breaking changes).
 
-### `psycheros-v*`
+### The flow for a single release event
 
-The Psycheros harness release is a **two-step dispatch** because the artifact is
-a Docker image (built by `docker.yml`) rather than a file uploaded to a Release:
+For each package the maintainer decides to ship:
 
-```bash
-# After tag + Release exist:
-gh workflow run docker.yml  --ref psycheros-v0.1.0   # builds + pushes the image
-gh workflow run release.yml --ref psycheros-v0.1.0   # emits notes-only marker
-```
+1. **For DRIFT packages**: bump `packages/<pkg>/deno.json:version` on `main`,
+   commit (signed), push.
+2. **Cut a signed annotated tag** of the form `<package>-v<version>` against
+   the current `main` tip:
+   ```bash
+   git tag -s -a <package>-v<version> -m "<one-line release summary>" <SHA>
+   git push origin <package>-v<version>
+   ```
+3. **Override the auto-generated release notes** with curated notes if the
+   GitHub-generated notes aren't sufficient:
+   ```bash
+   gh release edit <package>-v<version> --notes-file <path-to-curated-notes>.md
+   ```
 
-The `release` workflow for `psycheros-v*` does not attach files — the container
-image is the artifact. It emits notice annotations reminding the operator to
-also dispatch `docker.yml`.
+### What auto-fires on tag push
+
+A `<package>-v*` tag push fires the appropriate workflows immediately:
+
+| Tag prefix | docker.yml | release.yml |
+|---|---|---|
+| `psycheros-v*` | Builds + pushes `ghcr.io/psycherosai/psycheros:<semver>` + `:latest` + `:sha-<short>` | Self-bootstraps the GH Release with auto-generated notes (Latest badge) |
+| `launcher-v*` | — | Self-bootstraps the GH Release; uploads bundle `.zip` / `.tar.gz` + raw `dashboard.ts` / `run.sh` / `run.ps1` |
+| `entity-core-v*` | — | Self-bootstraps the GH Release; uploads scoped source `.tar.gz` / `.zip` |
+| `entity-loom-v*` | — | Self-bootstraps the GH Release; uploads scoped source `.tar.gz` / `.zip` |
+
+Both workflows are also preserved as `workflow_dispatch`-capable for manual
+retries (e.g. transient network failures or cache misses); the canonical
+trigger is the tag push.
 
 ## Image tag conventions (psycheros)
 
