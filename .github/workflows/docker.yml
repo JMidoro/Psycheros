@@ -83,14 +83,11 @@ jobs:
             org.opencontainers.image.title=Psycheros
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.licenses=MPL-2.0
-          # Note: org.opencontainers.image.source and .url default to the
-          # *building* repository (set by docker/metadata-action from
-          # github.repository). While canonical builds live in
-          # PsycherosAI/Psycheros-staging (private), users pulling the image
-          # see those labels pointing at a repo they can't access. This
-          # auto-corrects once canonical builds move to PsycherosAI/Psycheros
-          # (public). No override today — pointing at an empty repo is worse
-          # than pointing at the build provenance.
+          # docker/metadata-action also injects image.source / image.url /
+          # image.revision / image.version / image.created automatically from
+          # github.repository + the matched tag — those resolve to the public
+          # Psycheros repo + the stripped semver, which is what users want
+          # to see in `docker inspect` and the GHCR sidebar.
 
       - name: Build and push
         uses: docker/build-push-action@v7

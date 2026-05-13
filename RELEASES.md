@@ -13,7 +13,7 @@ Every release tag uses the form `<package>-v<ver>`:
 | `psycheros`   | `psycheros-v`   | `psycheros-v0.1.0`   | Docker image at `ghcr.io/psycherosai/psycheros`  |
 | `entity-core` | `entity-core-v` | `entity-core-v0.1.0` | Tagged source release (tarball + zip)            |
 | `entity-loom` | `entity-loom-v` | `entity-loom-v0.2.0` | Tagged source release (tarball + zip)            |
-| `launcher`    | `launcher-v`    | `launcher-v0.1.0`    | Bundle (zip + tarball + raw helper-script files) |
+| `launcher`    | `launcher-v`    | `launcher-v0.1.0`    | Bundle (zip + tarball) + raw install scripts     |
 
 Each package follows [Semantic Versioning 2.0](https://semver.org/). MAJOR for
 breaking changes, MINOR for backwards-compatible additions, PATCH for fixes. The
@@ -111,7 +111,7 @@ A `<package>-v*` tag push fires the appropriate workflows immediately:
 | Tag prefix | docker.yml | release.yml |
 |---|---|---|
 | `psycheros-v*` | Builds + pushes `ghcr.io/psycherosai/psycheros:<semver>` + `:latest` + `:sha-<short>` | Creates GH Release (Latest badge), notes from `packages/psycheros/CHANGELOG.md` |
-| `launcher-v*` | — | Creates GH Release, notes from `packages/launcher/CHANGELOG.md`; uploads bundle `.zip` / `.tar.gz` + raw `dashboard.ts` / `run.sh` / `run.ps1` |
+| `launcher-v*` | — | Creates GH Release, notes from `packages/launcher/CHANGELOG.md`; uploads bundle `.zip` / `.tar.gz` + raw `install.sh` / `install.ps1` |
 | `entity-core-v*` | — | Creates GH Release, notes from `packages/entity-core/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip` |
 | `entity-loom-v*` | — | Creates GH Release, notes from `packages/entity-loom/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip` |
 
@@ -206,18 +206,33 @@ free-tier repos. Our scoped per-package archive is the canonical consumption
 path for distribution; the monorepo source is available for users who want the
 full workspace.
 
-The `launcher-v*` bundle layout:
+The `launcher-v*` bundle (`.tar.gz` and `.zip`) contains the full
+`packages/launcher/` source tree, renamed to `<tag>/` at the top level:
 
 ```
-launcher-v0.1.0/
-  dashboard.ts
-  run.sh
-  run.ps1
+launcher-v0.2.0/
+  CHANGELOG.md
   README.md
+  dashboard.ts
+  deno.json
+  docs/
+  install.ps1
+  install.sh
+  run.ps1
+  run.sh
+  version.ts
 ```
 
-Plus the raw `dashboard.ts`, `run.sh`, and `run.ps1` files attached at the top
-of the Release for direct fetch.
+The runtime entry-point `dashboard.ts` imports `./version.ts`, which imports
+`./deno.json` — so a runnable launcher needs the full bundle, not just the
+boot script. `release.yml` runs `deno check` against the staged bundle as a
+smoke test before upload to catch any future siblings being added without
+the bundle step being updated.
+
+Plus the raw `install.sh` and `install.ps1` files attached at the top of the
+Release for direct fetch. These clone the Psycheros monorepo themselves and
+don't depend on bundle siblings, so they work as standalone downloads for
+users who want a one-step bootstrap.
 
 ## Workflow files
 

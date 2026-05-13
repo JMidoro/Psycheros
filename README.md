@@ -16,13 +16,21 @@ Built on [Deno](https://deno.land). Released under [MPL-2.0](LICENSE).
 
 ## Quickstart
 
-The friendliest path is the **launcher** — two files, no terminal required.
+The friendliest path is the **launcher** — a one-step installer, no terminal
+experience required.
 
-1. Download `run.sh` (macOS/Linux) or `run.ps1` (Windows) plus `dashboard.ts`
-   from the [latest release](https://github.com/PsycherosAI/Psycheros/releases).
-2. Put both in the same folder.
-3. Run the script. A browser opens at `http://localhost:3001` with Install /
-   Update / Start / Stop buttons.
+1. From the most recent
+   [`launcher-v*` release](https://github.com/PsycherosAI/Psycheros/releases?q=launcher-v),
+   download `install.sh` (macOS/Linux) or `install.ps1` (Windows).
+2. Run it. The installer clones Psycheros, installs Deno if needed, and walks
+   through setup.
+3. Run `./run.sh` (or right-click `run.ps1` → **Run with PowerShell**) from
+   inside `packages/launcher/`. A browser opens at `http://localhost:3001`
+   with Install / Update / Start / Stop buttons.
+
+Prefer not to clone the whole repo? Grab `launcher-v*.tar.gz` (or `.zip`) from
+the same release page, extract it, and run `./run.sh` from inside the
+extracted folder — the bundle is self-contained.
 
 ### Docker
 

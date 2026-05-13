@@ -7,7 +7,7 @@ on:
   # is kept for retries or out-of-band re-runs.
   #
   # Supported tag prefixes (independent version lineages):
-  #   launcher-vX.Y.Z      → launcher bundle (zip + tarball + raw files)
+  #   launcher-vX.Y.Z      → launcher bundle (zip + tarball) + raw install scripts
   #   entity-core-vX.Y.Z   → source tarball of packages/entity-core/
   #   entity-loom-vX.Y.Z   → source tarball of packages/entity-loom/
   #   psycheros-vX.Y.Z     → notes-only (container built by docker.yml)
@@ -63,25 +63,48 @@ jobs:
         env:
           REF: ${{ github.ref_name }}
         run: |
-          mkdir -p "bundle/${REF}"
-          cp packages/launcher/dashboard.ts "bundle/${REF}/"
-          cp packages/launcher/run.sh      "bundle/${REF}/"
-          cp packages/launcher/run.ps1     "bundle/${REF}/"
-          cp packages/launcher/README.md   "bundle/${REF}/"
-          ( cd bundle && zip -r "${REF}.zip"    "${REF}" )
+          # Ship the entire launcher package dir. dashboard.ts imports
+          # ./version.ts which imports ./deno.json, so the runtime
+          # entry-point needs all of its siblings — not just the boot
+          # scripts. Matches the cp -a pattern used by entity-core and
+          # entity-loom below.
+          mkdir -p bundle
+          cp -a packages/launcher "bundle/${REF}"
           ( cd bundle && tar -czf "${REF}.tar.gz" "${REF}" )
+          ( cd bundle && zip -r   "${REF}.zip"    "${REF}" )
+
+      - name: Set up Deno (for bundle smoke check)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2
+
+      - name: Smoke-check the bundled launcher
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          # Type-check dashboard.ts against its siblings inside the staged
+          # bundle. Catches the class of regression where a new runtime
+          # dependency gets added to dashboard.ts but the bundle step
+          # wasn't updated to ship it (the failure mode that caused
+          # launcher-v0.2.0 to ship unrunnable: missing ./version.ts and
+          # ./deno.json).
+          deno check "bundle/${REF}/dashboard.ts"
 
       - name: Upload launcher assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: |
+          # Bundle .tar.gz / .zip are the canonical consumption path — they
+          # contain the full launcher package and are runnable on extract.
+          # Raw install.sh / install.ps1 are also attached for one-click
+          # bootstrap: they clone the monorepo themselves and don't depend
+          # on bundle siblings, so they work as standalone downloads.
           gh release upload "$REF" --clobber \
-            "bundle/${REF}.zip" \
             "bundle/${REF}.tar.gz" \
-            packages/launcher/dashboard.ts \
-            packages/launcher/run.sh \
-            packages/launcher/run.ps1
+            "bundle/${REF}.zip" \
+            packages/launcher/install.sh \
+            packages/launcher/install.ps1
 
   entity-core:
     if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'entity-core-v')

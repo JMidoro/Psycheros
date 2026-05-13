@@ -1,8 +1,23 @@
 name: check
 
 on:
-  # Manual-only by design. Re-enable automatic triggers (push/PR) only
-  # after the operator has decided what should auto-run on what surface.
+  # Auto-fire on:
+  #   - every push to main (catches drift on direct merges + post-publish
+  #     squash landings)
+  #   - every <package>-v* tag push (last-chance type-check / lint / fmt
+  #     gate before release.yml bundles + publishes — would have caught
+  #     launcher-v0.2.0 shipping unrunnable due to a missing-sibling import)
+  #   - every PR targeting main (inbound contribution surface)
+  #   - workflow_dispatch (manual retry)
+  push:
+    branches: [main]
+    tags:
+      - "launcher-v*"
+      - "entity-core-v*"
+      - "entity-loom-v*"
+      - "psycheros-v*"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

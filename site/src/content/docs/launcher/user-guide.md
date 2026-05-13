@@ -11,23 +11,27 @@ If you've never run Psycheros before, start here.
 
 ## What you download
 
-Two files from the
-[latest release](https://github.com/PsycherosAI/Psycheros/releases) under the
-`launcher-v*` tag:
+The launcher bundle from the most recent
+[`launcher-v*` release](https://github.com/PsycherosAI/Psycheros/releases?q=launcher-v):
 
-- `run.sh` (macOS / Linux) **or** `run.ps1` (Windows) — boots the launcher.
-- `dashboard.ts` — the launcher itself.
+- `launcher-v*.tar.gz` (macOS / Linux), or
+- `launcher-v*.zip` (Windows).
 
-Put both files in the same folder. Your Desktop is fine, or any folder you can
-get back to later. The folder you choose is **not** where Psycheros installs
-itself — the launcher will create or use a separate install directory (default
-`~/psycheros`), which you can change in Settings.
+Extract the archive somewhere convenient — your Desktop is fine, or any folder
+you can get back to later. The folder you choose is **not** where Psycheros
+installs itself — the launcher will create or use a separate install directory
+(default `~/psycheros`), which you can change in Settings.
+
+If you'd rather skip the bundle and use the one-step installer, download
+`install.sh` (macOS / Linux) or `install.ps1` (Windows) from the same release
+page — those clone the Psycheros monorepo for you and don't need any other
+files alongside.
 
 ## Running the launcher
 
 ### Windows
 
-1. Right-click `run.ps1` → **Run with PowerShell**.
+1. Open the extracted folder. Right-click `run.ps1` → **Run with PowerShell**.
 2. A browser window opens to the dashboard.
 3. Click **Install**, fill in your settings, then click **Start**.
 
@@ -38,7 +42,8 @@ once: open PowerShell as your user and run
 ### macOS
 
 1. Open the **Terminal** app (in Applications → Utilities).
-2. Drag `run.sh` into the terminal window and press **Enter**.
+2. Drag `run.sh` from the extracted folder into the terminal window and press
+   **Enter**.
 3. A browser window opens to the dashboard.
 4. Click **Install**, fill in your settings, then click **Start**.
 
@@ -47,7 +52,8 @@ once: open PowerShell as your user and run
 Same as macOS, or run directly:
 
 ```bash
-chmod +x run.sh
+tar -xzf launcher-v*.tar.gz
+cd launcher-v*/
 ./run.sh
 ```
 
@@ -190,9 +196,10 @@ This only happens once.
 sure you don't have another instance of Psycheros running. Port 3000 is
 Psycheros's web UI; the launcher itself uses port 3001.
 
-**Dashboard won't open.** Make sure `run.ps1` (or `run.sh`) and `dashboard.ts`
-are in the **same folder**. The boot script looks for `dashboard.ts` next to
-itself.
+**Dashboard won't open.** Run `run.ps1` / `run.sh` from inside the extracted
+launcher folder. The boot script needs `dashboard.ts`, `version.ts`, and
+`deno.json` as siblings in the same directory — running the boot script in
+isolation won't work.
 
 **Launcher port 3001 already in use.** Another launcher session is probably
 already running. Close it before starting a new one.

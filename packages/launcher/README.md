@@ -4,24 +4,27 @@ Install, update, and run Psycheros from your browser. No terminal required.
 
 ## Easy mode (recommended)
 
-Two files do everything: `run.sh` (macOS / Linux) or `run.ps1` (Windows), plus
-`dashboard.ts`. Both come from the
-[latest release](https://github.com/PsycherosAI/Psycheros/releases).
+Grab the launcher bundle from the most recent
+[`launcher-v*` release](https://github.com/PsycherosAI/Psycheros/releases?q=launcher-v):
+either `launcher-v*.tar.gz` (macOS / Linux) or `launcher-v*.zip` (Windows).
+The bundle contains everything the launcher needs to run — `run.sh` /
+`run.ps1` are inside it, alongside their sibling files.
 
 ### Windows
 
-1. Download `run.ps1` and `dashboard.ts` from the latest release.
-2. Put them in the same folder — your Desktop is fine.
-3. Right-click `run.ps1` → **Run with PowerShell**.
+1. Download `launcher-v*.zip` from the latest launcher release.
+2. Extract the archive (right-click → **Extract All**) somewhere convenient —
+   your Desktop is fine.
+3. Open the extracted folder, right-click `run.ps1` → **Run with PowerShell**.
 4. A browser window opens automatically.
 5. Click **Install**, fill in the settings, then click **Start**.
 
 ### macOS
 
-1. Download `run.sh` and `dashboard.ts` from the latest release.
-2. Put them in the same folder.
-3. Open the **Terminal** app, drag `run.sh` into the terminal window, and press
-   Enter.
+1. Download `launcher-v*.tar.gz` from the latest launcher release.
+2. Double-click the archive in Finder to extract it.
+3. Open the **Terminal** app, drag `run.sh` from the extracted folder into the
+   terminal window, and press **Enter**.
 4. A browser window opens automatically.
 5. Click **Install**, fill in the settings, then click **Start**.
 
@@ -30,7 +33,8 @@ Two files do everything: `run.sh` (macOS / Linux) or `run.ps1` (Windows), plus
 Same as macOS, or from a terminal:
 
 ```bash
-chmod +x run.sh
+tar -xzf launcher-v*.tar.gz
+cd launcher-v*/
 ./run.sh
 ```
 
@@ -119,8 +123,9 @@ only happens once.
 **Port 3000 already in use.** Stop the other program using that port, or make
 sure you don't have another instance of Psycheros running.
 
-**Dashboard won't open.** Make sure `run.ps1` (or `run.sh`) and `dashboard.ts`
-are in the same folder.
+**Dashboard won't open.** Run `run.ps1` / `run.sh` from inside the extracted
+launcher folder — the boot script needs its sibling files (`dashboard.ts`,
+`version.ts`, `deno.json`) in the same directory.
 
 ## Companion packages
 
