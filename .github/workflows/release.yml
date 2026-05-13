@@ -36,9 +36,14 @@ jobs:
       # extract script pulls the entry whose header is "## [<version>] ..."
       # and writes it to a tempfile passed via `--notes-file`. Falls back
       # to `--generate-notes` only when the CHANGELOG entry is missing /
-      # empty (warning emitted). --latest=false because the source
-      # packages don't claim the Latest badge (psycheros does — see the
-      # psycheros-notes job).
+      # empty (warning emitted).
+      #
+      # The launcher owns the repo-wide "Latest" badge — see RELEASES.md
+      # "Latest badge policy". Strangers landing on /releases (and the
+      # `https://github.com/.../releases/latest/download/install.sh`
+      # redirect used by the docs site Getting-Started link) should be
+      # guided to the installer. --latest below sets the badge; the
+      # psycheros-notes job below uses --latest=false for the same reason.
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,10 +67,10 @@ jobs:
               printf "\n" >> "$NOTES_FILE"
               cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
             fi
-            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest --verify-tag
           else
             echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
-            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
           fi
 
       - name: Stage launcher bundle
@@ -237,11 +242,13 @@ jobs:
       # 2026-05-13). Keep this step even though the job uploads no assets.
       - uses: actions/checkout@v6
 
-      # psycheros is the harness lineage and claims the Latest badge for the
-      # repo. Same CHANGELOG-driven pattern as the other jobs, but with
-      # `--latest` (the Latest badge tracks psycheros only). The actual
-      # image push is docker.yml's job; this workflow only ensures the
-      # release page exists with curated notes.
+      # psycheros is the canonical harness artifact (image at GHCR), but the
+      # repo-wide "Latest" badge is owned by the launcher — see RELEASES.md
+      # "Latest badge policy". Strangers landing on /releases should be
+      # guided to the installer, not the notes-only harness release. The
+      # actual image push is docker.yml's job; this workflow only ensures
+      # the release page exists with curated notes. --latest=false below
+      # keeps the badge on the launcher.
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -265,10 +272,10 @@ jobs:
               printf "\n" >> "$NOTES_FILE"
               cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
             fi
-            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest --verify-tag
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
           else
             echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
-            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
           fi
 
       - name: Emit notes-only notice

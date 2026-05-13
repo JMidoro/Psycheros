@@ -112,12 +112,12 @@ For each package the maintainer decides to ship:
 
 A `<package>-v*` tag push fires the appropriate workflows immediately:
 
-| Tag prefix       | docker.yml                                                                            | release.yml                                                                                                                           |
-| ---------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `psycheros-v*`   | Builds + pushes `ghcr.io/psycherosai/psycheros:<semver>` + `:latest` + `:sha-<short>` | Creates GH Release (Latest badge), notes from `packages/psycheros/CHANGELOG.md`                                                       |
-| `launcher-v*`    | —                                                                                     | Creates GH Release, notes from `packages/launcher/CHANGELOG.md`; uploads bundle `.zip` / `.tar.gz` + raw `install.sh` / `install.ps1` |
-| `entity-core-v*` | —                                                                                     | Creates GH Release, notes from `packages/entity-core/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip`                          |
-| `entity-loom-v*` | —                                                                                     | Creates GH Release, notes from `packages/entity-loom/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip`                          |
+| Tag prefix       | docker.yml                                                                            | release.yml                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `psycheros-v*`   | Builds + pushes `ghcr.io/psycherosai/psycheros:<semver>` + `:latest` + `:sha-<short>` | Creates GH Release, notes from `packages/psycheros/CHANGELOG.md`                                                                                     |
+| `launcher-v*`    | —                                                                                     | Creates GH Release (Latest badge), notes from `packages/launcher/CHANGELOG.md`; uploads bundle `.zip` / `.tar.gz` + raw `install.sh` / `install.ps1` |
+| `entity-core-v*` | —                                                                                     | Creates GH Release, notes from `packages/entity-core/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip`                                         |
+| `entity-loom-v*` | —                                                                                     | Creates GH Release, notes from `packages/entity-loom/CHANGELOG.md`; uploads scoped source `.tar.gz` / `.zip`                                         |
 
 The note-extraction logic lives in `.github/scripts/extract-changelog-entry.sh`
 — it reads the latest top-level entry from the package's CHANGELOG.md at the
@@ -164,21 +164,45 @@ conflict with the existing `sha-<short>` tag — the registry would move the sha
 pointer from the release version to the new branch build. Avoid dispatching
 `docker.yml` against `main` until `main` has advanced past the release.
 
+## Latest badge policy
+
+The repo-wide "Latest" badge is set explicitly via `gh release create --latest`
+/ `--latest=false` per release. The **launcher** lineage owns the badge — the
+launcher is the user-facing entry point and the recommended Quickstart artifact
+for first-time visitors, so strangers landing on `/releases` should be guided
+there rather than to the notes-only harness release.
+
+| Tag prefix       | `--latest`       |
+| ---------------- | ---------------- |
+| `launcher-v*`    | `--latest`       |
+| `psycheros-v*`   | `--latest=false` |
+| `entity-core-v*` | `--latest=false` |
+| `entity-loom-v*` | `--latest=false` |
+
+This buys two stable URLs the docs site (or anyone else) can hardcode without
+rebuilding on every launcher cut:
+
+- `https://github.com/PsycherosAI/Psycheros/releases/latest` redirects to the
+  newest launcher release page (its install footer sits right above the assets).
+- `https://github.com/PsycherosAI/Psycheros/releases/latest/download/install.sh`
+  and `.../install.ps1` redirect to the latest launcher's install scripts —
+  filenames are version-less by design specifically to make these URLs stable.
+
+The bundle archives (`launcher-v*.tar.gz` / `.zip`) embed the version in the
+filename, so a "latest bundle" URL would only work if we also renamed the
+uploads to be version-less. We don't, for now — pinned-version filenames are the
+right default for asset integrity.
+
 ## Finding the latest release per package
 
-The GitHub Releases page has a single repo-wide "Latest" badge that GitHub
-assigns based on **creation timestamp**, not by tag prefix or package. With four
-independent version lineages in this workspace, the "Latest" badge is not a
-reliable per-package indicator — it just marks whichever release was created
-most recently.
-
-To find the latest of a specific package:
+To find the latest of a specific package (other than the launcher, which the
+Latest badge already points at):
 
 - **Browser**: filter the Releases page by tag prefix in the URL bar — e.g.
-  [releases?q=launcher-v](https://github.com/PsycherosAI/Psycheros/releases?q=launcher-v).
+  [releases?q=entity-core-v](https://github.com/PsycherosAI/Psycheros/releases?q=entity-core-v).
 - **CLI**: `gh release list --limit 50` and find the highest `<package>-v*` tag.
 - **API**:
-  `gh api repos/PsycherosAI/Psycheros/releases --jq '.[] | select(.tag_name | startswith("launcher-v")) | .tag_name' | head -1`.
+  `gh api repos/PsycherosAI/Psycheros/releases --jq '.[] | select(.tag_name | startswith("entity-core-v")) | .tag_name' | head -1`.
 
 For the Docker image, `docker pull ghcr.io/psycherosai/psycheros:latest` is the
 supported "give me the most recent stable release" path (with the caveat
