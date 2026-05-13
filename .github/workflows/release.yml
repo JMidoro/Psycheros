@@ -30,6 +30,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Self-bootstrap the GH Release. With auto-fire on tag push, this job
+      # runs immediately when the tag lands — before the operator has a
+      # chance to `gh release create` with hand-written notes. Create with
+      # auto-generated notes as a fallback; operator can `gh release edit
+      # --notes-file ...` afterward to swap in curated notes. --latest=false
+      # because the source packages don't claim the Latest badge (psycheros
+      # does — see psycheros-notes job).
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$REF" >/dev/null 2>&1; then
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+          fi
+
       - name: Stage launcher bundle
         env:
           REF: ${{ github.ref_name }}
@@ -47,7 +63,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: |
-          gh release upload "$REF" \
+          gh release upload "$REF" --clobber \
             "bundle/${REF}.zip" \
             "bundle/${REF}.tar.gz" \
             packages/launcher/dashboard.ts \
@@ -60,6 +76,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$REF" >/dev/null 2>&1; then
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+          fi
 
       - name: Stage source tarball
         env:
@@ -75,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: |
-          gh release upload "$REF" \
+          gh release upload "$REF" --clobber \
             "bundle/${REF}.tar.gz" \
             "bundle/${REF}.zip"
 
@@ -85,6 +110,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$REF" >/dev/null 2>&1; then
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+          fi
 
       - name: Stage source tarball
         env:
@@ -100,7 +134,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: |
-          gh release upload "$REF" \
+          gh release upload "$REF" --clobber \
             "bundle/${REF}.tar.gz" \
             "bundle/${REF}.zip"
 
@@ -109,10 +143,23 @@ jobs:
     name: psycheros-notes
     runs-on: ubuntu-latest
     steps:
+      # psycheros is the harness lineage and claims the Latest badge for the
+      # repo. Same auto-bootstrap pattern as the other jobs, but with
+      # --latest=true. The actual image push is docker.yml's job; this
+      # workflow only ensures the release page exists.
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$REF" >/dev/null 2>&1; then
+            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
+          fi
+
       - name: Emit notes-only notice
         env:
           REF: ${{ github.ref_name }}
         run: |
           echo "::notice::Tag '$REF' is the Psycheros harness lineage."
           echo "::notice::No release artifacts to attach — the container image is built + pushed by the docker workflow."
-          echo "::notice::Dispatch .github/workflows/docker.yml against the same tag to publish ghcr.io/${{ github.repository_owner }}/psycheros."
+          echo "::notice::Operator can edit the release notes via 'gh release edit \"$REF\" --notes-file ...' to swap auto-generated notes for curated ones."
