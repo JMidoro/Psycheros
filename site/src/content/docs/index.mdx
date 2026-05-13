@@ -36,6 +36,32 @@ The design value running through every layer:
 first-person convention if you want to understand why the code reads
 the way it does.
 
+## Getting Started
+
+The launcher handles install, update, start, and stop. Pick your platform:
+
+### macOS / Linux
+
+1. Download
+   [`install.sh`](https://github.com/PsycherosAI/Psycheros/releases/latest/download/install.sh).
+2. Run it:
+
+   ```bash
+   bash install.sh
+   ```
+
+### Windows
+
+1. Download
+   [`install.ps1`](https://github.com/PsycherosAI/Psycheros/releases/latest/download/install.ps1).
+2. Right-click → **Run with PowerShell**.
+
+   If PowerShell refuses unsigned scripts, allow them once with
+   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+Full reference and troubleshooting:
+[Launcher user guide](/Psycheros/launcher/user-guide/).
+
 ## Architecture
 
 ```
