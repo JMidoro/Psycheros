@@ -2,6 +2,7 @@
 title: "API Reference"
 ---
 
+
 ## Dual SSE Architecture
 
 Two SSE channels serve different purposes:

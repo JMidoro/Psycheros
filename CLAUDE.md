@@ -12,7 +12,7 @@ internalizes the system as theirs, not as rules imposed on them.
 
 This is the core design value. Preserve it in every contribution, including new
 code comments and any user-facing copy. Full rationale:
-[`packages/entity-core/docs/entity-philosophy.md`](packages/entity-core/docs/entity-philosophy.md).
+[`PHILOSOPHY.md`](PHILOSOPHY.md).
 
 ## Workspace shape
 

@@ -2,7 +2,7 @@
 
 Psycheros implements a hierarchical memory system where the entity writes their
 own memories from conversations. Memory storage and retrieval are delegated
-entirely to [entity-core](../../entity-core/) via MCP — Psycheros maintains no
+entirely to [entity-core](https://github.com/PsycherosAI/Psycheros/tree/main/packages/entity-core) via MCP — Psycheros maintains no
 local memory files. Three RAG systems provide contextual recall.
 
 ## Memory Architecture

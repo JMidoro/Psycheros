@@ -2,6 +2,7 @@
 title: "UI Features"
 ---
 
+
 Detailed documentation for Psycheros web UI features.
 
 ## Lazy Message Loading
@@ -315,9 +316,11 @@ Customizable UI theming. Access via Settings → General Settings → Theme tab.
 
 ### Color Themes
 
-8 preset themes: Violet Dream (default), Phosphor Green, Ocean Blue, Sunset
-Orange, Rose, Amber, Mint, Slate. Each has distinct accent colors. Custom accent
-color also available via color picker.
+8 preset themes — Violet Dream, Phosphor Green, Ocean Blue, Sunset Orange,
+Rose, Amber, Mint, Slate — plus a free-form color picker. The custom color
+picker is initialized to Phosphor Green (`#39ff14`), which also matches the
+`PSYCHEROS_ACCENT_COLOR` env-var default. Selecting any preset takes
+precedence; the env var only applies when no preset is chosen.
 
 ### Background Images
 

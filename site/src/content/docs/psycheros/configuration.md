@@ -2,51 +2,66 @@
 title: "Configuration"
 ---
 
+
 All Psycheros configuration is via environment variables. Copy `.env.example` to
 `.env` and set values as needed.
 
 ## Core Settings
 
-| Variable           | Required | Default       | Description                                                                       |
-| ------------------ | -------- | ------------- | --------------------------------------------------------------------------------- |
-| `ZAI_API_KEY`      | No*      | —             | API key for default LLM profile                                                   |
-| `ZAI_BASE_URL`     | No       | Z.ai endpoint | API endpoint URL for default profile                                              |
-| `ZAI_MODEL`        | No       | `glm-4.7`     | Main model for chat (default profile)                                             |
-| `ZAI_WORKER_MODEL` | No       | `GLM-4.5-Air` | Lightweight model for background tasks (auto-titling, daily memory summarization) |
-| `PSYCHEROS_PORT`   | No       | `3000`        | Server port                                                                       |
+| Variable                            | Required | Default       | Description                                                                                                                                          |
+| ----------------------------------- | -------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZAI_API_KEY`                       | No\*     | —             | API key for default LLM profile                                                                                                                      |
+| `ZAI_BASE_URL`                      | No\*     | Z.ai endpoint | API endpoint URL for default profile                                                                                                                 |
+| `ZAI_MODEL`                         | No\*     | `glm-4.7`     | Main model for chat (default profile)                                                                                                                |
+| `ZAI_WORKER_MODEL`                  | No\*     | `GLM-4.5-Air` | Lightweight model for background tasks (auto-titling, daily memory summarization)                                                                    |
+| `PSYCHEROS_PORT`                    | No       | `3000`        | Server port                                                                                                                                          |
+| `PSYCHEROS_HOST`                    | No       | `0.0.0.0`     | Server hostname                                                                                                                                      |
+| `PSYCHEROS_ACCENT_COLOR`            | No       | `#39ff14`     | UI accent color (hex). Overridden by any preset theme selected in Settings > Appearance.                                                             |
+| `PSYCHEROS_TOOLS`                   | No       | (all)         | Comma-separated list of enabled tools. Default: all tools enabled. Use `none` to disable all non-auto tools, or list specific tools to limit access. |
+| `PSYCHEROS_MEMORY_HOUR`             | No       | `4`           | Fallback UTC hour for daily summarization (0-23). Only used when `PSYCHEROS_DISPLAY_TZ` is not set.                                                   |
+| `PSYCHEROS_SNAPSHOT_HOUR`           | No       | `3`           | Hour to run daily identity snapshots (0-23)                                                                                                          |
+| `PSYCHEROS_SNAPSHOT_RETENTION_DAYS` | No       | `30`          | Days to retain snapshots before cleanup                                                                                                              |
+| `PSYCHEROS_WEB_SEARCH`              | No       | `disabled`    | Web search provider: `disabled`, `tavily`, or `brave`                                                                                                |
+| `TAVILY_API_KEY`                    | No       | —             | API key for Tavily search (when `PSYCHEROS_WEB_SEARCH=tavily`)                                                                                       |
+| `BRAVE_SEARCH_API_KEY`              | No       | —             | API key for Brave search (when `PSYCHEROS_WEB_SEARCH=brave`)                                                                                         |
+| `DISCORD_BOT_TOKEN`                 | No       | —             | Discord bot token for sending DMs                                                                                                                    |
+| `DISCORD_DEFAULT_CHANNEL_ID`        | No       | —             | Discord user ID to DM by default                                                                                                                     |
 
 \* `ZAI_*` variables are only used to create a default profile on first run. LLM
 connections are configured via **Settings > LLM Connections** in the web UI.
 Multiple named profiles can be created for different providers (OpenRouter,
 OpenAI, Alibaba/Qwen, NanoGPT, custom). Once profiles are saved to
-`.psycheros/llm-settings.json`, the UI settings take precedence over env vars. |
-`PSYCHEROS_HOST` | No | `0.0.0.0` | Server hostname | | `PSYCHEROS_ACCENT_COLOR`
-| No | `#a855f7` | UI accent color (hex, overridden by theme preset) | |
-`PSYCHEROS_TOOLS` | No | (all) | Comma-separated list of enabled tools. Default:
-all tools enabled. Use `none` to disable all non-auto tools, or list specific
-tools to limit access. | | `PSYCHEROS_MEMORY_HOUR` | No | `4` | Fallback UTC
-hour for daily summarization (0-23). Only used when `PSYCHEROS_DISPLAY_TZ` is
-not set. | | `PSYCHEROS_SNAPSHOT_HOUR` | No | `3` | Hour to run daily identity
-snapshots (0-23) | | `PSYCHEROS_SNAPSHOT_RETENTION_DAYS` | No | `30` | Days to
-retain snapshots before cleanup | | `PSYCHEROS_WEB_SEARCH` | No | `disabled` |
-Web search provider: `disabled`, `tavily`, or `brave` | | `TAVILY_API_KEY` | No
-| — | API key for Tavily search (when `PSYCHEROS_WEB_SEARCH=tavily`) | |
-`BRAVE_SEARCH_API_KEY` | No | — | API key for Brave search (when
-`PSYCHEROS_WEB_SEARCH=brave`) | | `DISCORD_BOT_TOKEN` | No | — | Discord bot
-token for sending DMs | | `DISCORD_DEFAULT_CHANNEL_ID` | No | — | Discord user
-ID to DM by default |
+`.psycheros/llm-settings.json`, the UI settings take precedence over env vars.
+
+## Timezone
+
+| Variable               | Required | Default | Description                                                                                            |
+| ---------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `PSYCHEROS_DISPLAY_TZ` | No       | —       | IANA timezone for display and Pulse scheduling (e.g. `America/New_York`). Falls back to `TZ`, then UTC |
+| `TZ`                   | No       | `UTC`   | Timezone for message timestamps (e.g., `America/Los_Angeles`)                                          |
+
+## In-Container SSH
+
+Optional. When enabled, an sshd inside the container exposes a shell for
+operator access. Disabled by default. When enabling, you must also map the port
+at `docker run -p <host>:<port>`.
+
+| Variable                         | Required | Default | Description                                                                                                                                                                                          |
+| -------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PSYCHEROS_SSH_ENABLED`          | No       | `false` | Enable the in-container sshd                                                                                                                                                                         |
+| `PSYCHEROS_SSH_PORT`             | No       | `47291` | Port sshd listens on inside the container                                                                                                                                                            |
+| `PSYCHEROS_SSH_AUTHORIZED_KEYS`  | No       | —       | Authorized public keys, separated by **commas** (not newlines — UnRAID and many container UIs strip newlines). Alternatively, mount a file at `/root/.ssh/authorized_keys`; the env var takes precedence. |
 
 ## Discord Gateway Settings
 
-Configured via Settings > External Connections > Channels > Discord. Persists to
+Discord Gateway is configured via **Settings > External Connections > Channels >
+Discord** in the web UI, not via env vars. Settings persist to
 `.psycheros/discord-gateway.json`.
 
 | Field                    | Type    | Default | Description                                                                                                                                                             |
 | ------------------------ | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `includeInDailyMemories` | boolean | `true`  | Include Discord activity in daily memory summarization via pre-summarizer                                                                                               |
 | `memoryInstructions`     | string  | `""`    | Instructions for the pre-summarizer and daily memory writer (e.g., handle mappings like "superdog420 is James"). Written in first-person from the entity's perspective. |
-| `PSYCHEROS_DISPLAY_TZ`   | No      | —       | IANA timezone for display and Pulse scheduling (e.g. `America/New_York`). Falls back to `TZ`, then UTC                                                                  |
-| `TZ`                     | No      | `UTC`   | Timezone for message timestamps (e.g., `America/Los_Angeles`)                                                                                                           |
 
 ## Available Tools
 

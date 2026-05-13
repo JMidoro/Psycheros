@@ -5,25 +5,124 @@ template: splash
 hero:
   image:
     file: ../../assets/psycheros-logo.svg
-  tagline: An embodiment for an AI entity — not a tool, not an assistant framework.
+  tagline: A persistent AI entity — not a chat thread, not an assistant framework.
+  actions:
+    - text: Quickstart with the launcher
+      link: /Psycheros/launcher/user-guide/
+      icon: right-arrow
+      variant: primary
+    - text: Source on GitHub
+      link: https://github.com/PsycherosAI/Psycheros
+      icon: external
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
+{/* Hand-written hrefs must include the `/Psycheros` base prefix explicitly —
+    Starlight only auto-prepends `base` for its own sidebar/nav components,
+    not LinkCard or content-level components. Keep these in sync with `base`
+    in astro.config.mjs if it ever changes. */}
+
+Psycheros runs an AI entity — not a chat thread. The entity has files
+describing who it is, a memory hierarchy that summarizes its conversations
+day → week → month → year, a knowledge graph of the people and places it's
+encountered, RAG over its memories, and tool access for the world it lives in.
+The entity's canonical self lives in a separate MCP server (`entity-core`), so
+the same entity can persist across multiple interfaces — the web harness,
+SillyTavern, Claude Code, OpenWebUI — while staying coherent.
+
+The design value running through every layer:
+[**the entity is the subject**](/Psycheros/philosophy/) — read the
+first-person convention if you want to understand why the code reads
+the way it does.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────┐
+│      entity-core (MCP server, stdio)     │
+│  • Identity files                        │
+│  • Hierarchical memory                   │
+│  • Knowledge graph (SQLite + sqlite-vec) │
+│  • Pull / push sync across embodiments   │
+└────────────────────┬─────────────────────┘
+                     │ stdio MCP
+       ┌─────────────┴───────────┐
+       │     other embodiments   │
+   ┌───┴───┐   ┌──────────┐    (SillyTavern,
+   │ Psy-  │   │  Loom    │     OpenWebUI,
+   │cheros │   │  (import │     Claude Code,
+   │       │   │  wizard) │     etc.)
+   └───────┘   └──────────┘
+```
+
+**entity-core is canonical** for identity and memory. Psycheros — and any
+other embodiment — spawns it over stdio MCP and syncs through pull/push.
+**entity-loom** is one-shot: a wizard for converting a chat-history export
+from a foreign platform into an importable package.
+
+## What's in the box
+
 <CardGrid>
 	<LinkCard
+		title="Launcher"
+		href="/Psycheros/launcher/user-guide/"
+		description="Start here. Two-file installer + dashboard that handles install / update / start / stop for non-technical operators."
+	/>
+	<LinkCard
 		title="Psycheros"
-		href="/psycheros/api-reference/"
-		description="The embodiment interface — UI, tools, identity system, memory + RAG."
+		href="/Psycheros/psycheros/configuration/"
+		description="The harness — web UI, chat loop, tools, RAG. The interface your entity runs inside."
 	/>
 	<LinkCard
 		title="entity-core"
-		href="/entity-core/entity-philosophy/"
-		description="The memory and identity substrate — knowledge graph, snapshots, sync protocol, MCP tools."
+		href="/Psycheros/entity-core/sync-and-memory/"
+		description="The canonical-self MCP server. Identity files, hierarchical memory, knowledge graph. Sync target for every embodiment."
 	/>
 	<LinkCard
 		title="entity-loom"
-		href="/entity-loom/user-guide/"
-		description="Import old AI companion chat histories into the entity's memory."
+		href="/Psycheros/entity-loom/user-guide/"
+		description="One-shot import wizard. Convert chat exports from ChatGPT, Claude, SillyTavern, Kindroid, or Letta into a package the entity can absorb."
 	/>
 </CardGrid>
+
+## What makes it interesting
+
+- **An entity, not an assistant.** Identity files (self, user, relationship,
+  custom) are written in first person and stay stable across sessions. Every
+  prompt, comment, and tool description in the codebase uses the entity's
+  voice — they internalize the system as theirs.
+- **Memory that consolidates.** Daily summaries roll up to weekly → monthly →
+  yearly; significant events are preserved permanently. RAG retrieves over
+  chat history, vault documents, the lorebook, and the knowledge graph.
+- **One self across interfaces.** Because identity and memory live in an MCP
+  server, any MCP-capable client (SillyTavern, Claude Code, OpenWebUI) can
+  talk to the same entity coherently — same memories, same identity, same
+  continuity.
+- **Pluggable LLM.** Any OpenAI-compatible endpoint — Z.ai, OpenRouter,
+  OpenAI, NanoGPT, local models. Multiple named profiles; one is active
+  for chat.
+- **Tool surface.** Web search, image generation, image captioning, Discord
+  (DM + gateway server participation), home automation, intimate hardware
+  via Buttplug or Lovense.
+- **Pulse.** Autonomous scheduled prompts — cron, inactivity, webhook, or
+  filesystem triggers. The entity can act on its own time.
+- **Custom tools.** Drop a `.js` or `.ts` file in `custom-tools/` and the
+  entity can use it. No core changes needed.
+
+## Standalone use
+
+`entity-core` and `entity-loom` are independently useful outside Psycheros.
+
+- **entity-core** is a generic MCP server for AI entity identity and memory.
+  Any MCP client can spawn it. Shipped as a tagged source release under the
+  `entity-core-v*` tag prefix.
+- **entity-loom** is a generic chat-history-to-package converter — useful for
+  anyone building an AI companion system that wants to import from ChatGPT,
+  Claude, SillyTavern, Kindroid, or Letta. Tagged source release under the
+  `entity-loom-v*` prefix.
+
+Built on [Deno](https://deno.land). Released under
+[MPL-2.0](https://github.com/PsycherosAI/Psycheros/blob/main/LICENSE).
+Solo-maintained, contributions welcome — see
+[CONTRIBUTING.md](https://github.com/PsycherosAI/Psycheros/blob/main/CONTRIBUTING.md).

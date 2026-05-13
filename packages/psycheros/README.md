@@ -13,7 +13,7 @@ through it. With MCP disabled, Psycheros falls back to a local identity cache
 and writes no memories.
 
 All prompts and tool descriptions use the entity's first-person voice; see
-[`docs/entity-philosophy.md`](docs/entity-philosophy.md) for the rationale.
+[`PHILOSOPHY.md`](../../PHILOSOPHY.md) for the rationale.
 
 ## Quickstart
 
@@ -66,8 +66,8 @@ concurrency model, the state-changes pattern — see [`CLAUDE.md`](CLAUDE.md).
 
 ## Deep references
 
-- [`docs/entity-philosophy.md`](docs/entity-philosophy.md) — first-person
-  convention, ownership, the embodiment concept
+- [`PHILOSOPHY.md`](../../PHILOSOPHY.md) (repo root) — first-person
+  convention, ownership, the multi-embodiment model
 - [`docs/configuration.md`](docs/configuration.md) — full env-var reference,
   tools list, MCP / RAG settings
 - [`docs/tools-reference.md`](docs/tools-reference.md) — tool system, identity
@@ -78,8 +78,8 @@ concurrency model, the state-changes pattern — see [`CLAUDE.md`](CLAUDE.md).
   editing, situational awareness, graph viz
 - [`docs/api-reference.md`](docs/api-reference.md) — full API endpoints, dual
   SSE architecture, retry stream
-- [`docs/code-review-findings.md`](docs/code-review-findings.md) and
-  [`docs/security-audit.md`](docs/security-audit.md) — review history
+- [`docs/security-audit.md`](docs/security-audit.md) — security audit
+  with threat model + accepted-risk rationale
 
 ## Companion packages
 

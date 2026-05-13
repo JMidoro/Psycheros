@@ -18,7 +18,7 @@ anything else MCP-capable) spawn it as a subprocess and sync identity and memory
 through pull / push tools.
 
 First-person convention applies — see
-[`docs/entity-philosophy.md`](docs/entity-philosophy.md) for the rationale.
+[`PHILOSOPHY.md`](../../PHILOSOPHY.md) for the rationale.
 
 ## Quickstart (standalone)
 
@@ -98,8 +98,8 @@ consolidation cron is wired, the `periods.ts` ISO-week trap — see
 
 - [`docs/mcp-tools.md`](docs/mcp-tools.md) — complete tool reference with
   schemas, examples, and current counts
-- [`docs/entity-philosophy.md`](docs/entity-philosophy.md) — first-person
-  convention, ownership, design philosophy
+- [`PHILOSOPHY.md`](../../PHILOSOPHY.md) (repo root) — first-person
+  convention, ownership, multi-embodiment model
 - [`docs/sync-and-memory.md`](docs/sync-and-memory.md) — sync protocol, conflict
   resolution, memory hierarchy, retrieval ranking
 - [`docs/knowledge-graph.md`](docs/knowledge-graph.md) — node and edge types,

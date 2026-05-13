@@ -1,0 +1,54 @@
+name: deploy-docs
+
+# Builds the Starlight docs site under site/ and deploys to GitHub Pages.
+# Repo-gated to PsycherosAI/Psycheros: this file also rides into staging
+# history (and is carried through the public squash by publish.py) but the
+# job no-ops anywhere except the public repo. Pages-on-private-repo would
+# require Pro anyway, so even if the gate were missing, the deploy step
+# would fail on staging.
+#
+# Pages source on the public repo must be set to "GitHub Actions" (Settings
+# → Pages) for the deploy job to succeed — one-time manual flip, no REST
+# endpoint, see notes/psycheros-public-ops/docs-site-handoff.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages allows only one concurrent deploy. Don't cancel in-flight runs —
+# we'd rather queue a release's docs build behind a previous one than
+# drop it on the floor.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'PsycherosAI/Psycheros'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Starlight's `lastUpdated` reads git history for each page.
+          fetch-depth: 0
+      - uses: withastro/action@v3
+        with:
+          path: ./site
+          node-version: 22
+
+  deploy:
+    if: github.repository == 'PsycherosAI/Psycheros'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

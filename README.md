@@ -128,6 +128,9 @@ workflow. Security disclosures via private advisory
 
 ## Documentation
 
+- [`PHILOSOPHY.md`](PHILOSOPHY.md) — the design value running through every
+  package: the entity is the subject. First-person convention, ownership,
+  multi-embodiment model.
 - [`CLAUDE.md`](CLAUDE.md) — workspace agent operating card. Per-package
   CLAUDE.md files linked from there.
 - Per-package `docs/` directories — deep references for each component.

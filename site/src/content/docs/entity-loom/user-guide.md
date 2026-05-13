@@ -2,17 +2,20 @@
 title: "Entity Loom — User Guide"
 ---
 
+
 Entity Loom is a tool that converts your old AI companion chat histories into a
 package Psycheros can use. It parses exports from ChatGPT, Claude, SillyTavern,
-and Letta, then generates daily summaries, picks out significant memories, and
-builds a knowledge graph. Everything runs in your browser.
+Kindroid, and Letta, then generates daily summaries, picks out significant
+memories, and builds a knowledge graph. Everything runs in your browser.
 
 ## What you need before you start
 
 1. **An API key** — Entity Loom uses an AI model to generate memory summaries
    and the knowledge graph. You need an API key and an endpoint URL from a
    provider that offers OpenAI-compatible API access (e.g., OpenRouter, OpenAI,
-   Anthropic). The system was tested with GLM 4.7.
+   Anthropic, Google AI Studio). Any modern instruction-following model with a
+   ≥32k context window will work; the cost estimator (Stage 3+) has built-in
+   pricing for OpenAI, Anthropic, and Google models.
 
 2. **Your chat exports** — You need to export your chat history from whichever
    platform you used:
@@ -24,6 +27,8 @@ builds a knowledge graph. Everything runs in your browser.
    - **Claude**: Go to Settings, then Data export. You'll get a JSONL file.
    - **SillyTavern**: Export individual chats as JSONL files from your
      SillyTavern data folder.
+   - **Kindroid**: Export your chat logs as JSON from the Kindroid dashboard
+     (one file per character is fine).
    - **Letta**: Export your agent's chat log as a JSON file.
 
 **Important: Run all platforms together.** If you have chat histories from
@@ -65,7 +70,9 @@ Under **LLM Provider**:
 - **Base URL** — The API endpoint for your provider (e.g.,
   `https://openrouter.ai/api/v1`).
 - **API Key** — Your API key.
-- **Model** — The model to use. The system was tested with GLM 4.7.
+- **Model** — The model name to use. Pick any chat-completions model with at
+  least a 32k context window that your provider exposes (e.g.,
+  `google/gemini-2.5-flash`, `anthropic/claude-haiku-4.5`, `gpt-5-mini`).
 
 Click **Test Connection** to verify your API key works before saving.
 

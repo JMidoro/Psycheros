@@ -100,7 +100,7 @@ Batch backfill from an existing memory tree is
 | Topic                                 | Doc                                                          |
 | ------------------------------------- | ------------------------------------------------------------ |
 | MCP tool reference, schemas, examples | [docs/mcp-tools.md](docs/mcp-tools.md)                       |
-| First-person philosophy               | [docs/entity-philosophy.md](docs/entity-philosophy.md)       |
+| First-person philosophy               | [../../PHILOSOPHY.md](../../PHILOSOPHY.md)                   |
 | Sync protocol, memory retrieval       | [docs/sync-and-memory.md](docs/sync-and-memory.md)           |
 | Knowledge graph internals             | [docs/knowledge-graph.md](docs/knowledge-graph.md)           |
 | Snapshots: retention, restore         | [docs/snapshots.md](docs/snapshots.md)                       |

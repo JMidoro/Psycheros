@@ -2,6 +2,7 @@
 title: "Code Review Findings"
 ---
 
+
 Status: **Complete** — all critical and high-severity issues fixed.
 
 ## Scope
@@ -123,5 +124,5 @@ reliability, and snapshot integrity.
 - **Transaction safety**: Graph write operations use `store.transaction()` for
   atomicity. Foreign keys enabled at SQLite level.
 
-See also: [security-audit.md](security-audit.md) for the full security
+See also: [security-audit.md](./security-audit/) for the full security
 assessment.

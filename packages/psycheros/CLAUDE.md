@@ -119,13 +119,12 @@ user message is always preserved. Budget =
 
 | Topic                             | Doc                                                          |
 | --------------------------------- | ------------------------------------------------------------ |
-| First-person philosophy           | [docs/entity-philosophy.md](docs/entity-philosophy.md)       |
+| First-person philosophy           | [../../PHILOSOPHY.md](../../PHILOSOPHY.md)                   |
 | Env vars, config, migrations      | [docs/configuration.md](docs/configuration.md)               |
 | Tool system, identity tiers       | [docs/tools-reference.md](docs/tools-reference.md)           |
 | Memory + RAG (chat, vault, graph) | [docs/memory-and-rag.md](docs/memory-and-rag.md)             |
 | UI features                       | [docs/ui-features.md](docs/ui-features.md)                   |
 | API endpoints, SSE architecture   | [docs/api-reference.md](docs/api-reference.md)               |
-| Code review findings              | [docs/code-review-findings.md](docs/code-review-findings.md) |
 | Security audit                    | [docs/security-audit.md](docs/security-audit.md)             |
 
 External Connections (Discord, web search, home, intimacy), Vision (image gen,

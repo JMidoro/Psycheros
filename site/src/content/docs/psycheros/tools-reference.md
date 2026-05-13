@@ -2,6 +2,7 @@
 title: "Tools & Identity System"
 ---
 
+
 ## Tool System Overview
 
 Tools are registered in `src/tools/registry.ts` via `AVAILABLE_TOOLS`. Each tool
@@ -99,7 +100,7 @@ managing tool enable/disable state.
 | `src/server/templates.ts`     | `renderToolsSettings()` and helper functions                                       |
 | `src/server/routes.ts`        | `handleGetToolsSettings`, `handleSaveToolsSettings`, `handleToolsSettingsFragment` |
 
-See [configuration.md](configuration.md) for the full list of available tools.
+See [configuration.md](./configuration/) for the full list of available tools.
 
 ## Web Search Tool
 
