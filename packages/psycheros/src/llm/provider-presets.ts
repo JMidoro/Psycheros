@@ -14,6 +14,7 @@
  * "custom" allows users to paste any OpenAI-compatible endpoint.
  */
 export type LLMProvider =
+  | "zai"
   | "openrouter"
   | "openai"
   | "alibaba"
@@ -100,6 +101,13 @@ export interface LLMProviderPreset {
  * These are used to pre-fill form fields when a user selects a provider.
  */
 export const LLM_PROVIDER_PRESETS: Record<LLMProvider, LLMProviderPreset> = {
+  zai: {
+    label: "Z.ai",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+    defaultModel: "glm-4.7",
+    defaultWorkerModel: "GLM-4.5-Air",
+    supportsThinking: true,
+  },
   openrouter: {
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
@@ -149,6 +157,7 @@ export const LLM_PROVIDER_PRESETS: Record<LLMProvider, LLMProviderPreset> = {
 export function inferProvider(baseUrl: string): LLMProvider {
   const url = baseUrl.toLowerCase();
 
+  if (url.includes("api.z.ai")) return "zai";
   if (url.includes("openrouter.ai")) return "openrouter";
   if (url.includes("api.openai.com")) return "openai";
   if (url.includes("dashscope.aliyuncs.com")) return "alibaba";
@@ -181,17 +190,19 @@ export function createDefaultProfile(): LLMConnectionProfile {
   const model = Deno.env.get("ZAI_MODEL") || "";
   const workerModel = Deno.env.get("ZAI_WORKER_MODEL") || "";
 
-  const provider = baseUrl ? inferProvider(baseUrl) : "openrouter";
+  // ZAI_* env vars name Z.ai explicitly, so fall back to the zai preset when
+  // ZAI_BASE_URL is unset rather than picking a different provider.
+  const provider = baseUrl ? inferProvider(baseUrl) : "zai";
+  const preset = LLM_PROVIDER_PRESETS[provider];
 
   return {
     id: crypto.randomUUID(),
-    name: provider !== "custom" ? inferProviderName(baseUrl) : "Default",
+    name: preset.label,
     provider,
-    baseUrl: baseUrl || LLM_PROVIDER_PRESETS.openrouter.baseUrl,
+    baseUrl: baseUrl || preset.baseUrl,
     apiKey,
-    model: model || LLM_PROVIDER_PRESETS[provider].defaultModel,
-    workerModel: workerModel ||
-      LLM_PROVIDER_PRESETS[provider].defaultWorkerModel,
+    model: model || preset.defaultModel,
+    workerModel: workerModel || preset.defaultWorkerModel,
     temperature: 0.7,
     topP: 1,
     topK: 0,
@@ -199,7 +210,7 @@ export function createDefaultProfile(): LLMConnectionProfile {
     presencePenalty: 0,
     maxTokens: 4096,
     contextLength: 128000,
-    thinkingEnabled: provider === "openrouter" || provider === "nanogpt" ||
-      provider === "custom",
+    thinkingEnabled: provider === "zai" || provider === "openrouter" ||
+      provider === "nanogpt" || provider === "custom",
   };
 }

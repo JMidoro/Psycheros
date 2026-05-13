@@ -32,7 +32,7 @@ first-run default if no profile exists yet.
 | Variable                | Default | Description                                                  |
 | ----------------------- | ------- | ------------------------------------------------------------ |
 | `ZAI_API_KEY`           | —       | First-run default LLM key. Optional once a profile is saved. |
-| `PSYCHEROS_MCP_ENABLED` | `false` | Spawn `entity-core` and route identity / memory through it.  |
+| `PSYCHEROS_MCP_ENABLED` | `true`  | Spawn `entity-core` and route identity / memory through it.  |
 | `TZ`                    | host    | Timezone for message timestamps and Pulse scheduling.        |
 
 Full reference: [`docs/configuration.md`](docs/configuration.md).
