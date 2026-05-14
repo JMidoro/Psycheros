@@ -7,6 +7,7 @@
 
 import type { Database } from "@db/sqlite";
 import { getVecVersion, loadVectorExtension } from "./vector.ts";
+import { initSchedulerTables } from "@psycheros/scheduler";
 
 /**
  * SQL schema for the Psycheros database.
@@ -490,32 +491,6 @@ function runMigrations(db: Database): void {
     console.log("[DB] Created context_snapshots table");
   }
 
-  // Migration: Add cron_job_runs table if missing
-  const hasCronJobRuns = db
-    .prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cron_job_runs'",
-    )
-    .get();
-
-  if (!hasCronJobRuns) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS cron_job_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        job_id TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        completed_at TEXT NOT NULL,
-        duration_ms INTEGER NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('success', 'error')),
-        result TEXT,
-        error TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_cron_job_runs_job
-        ON cron_job_runs(job_id, completed_at DESC);
-    `);
-    console.log("[DB] Created cron_job_runs table");
-  }
-
   // Migration: Add base_instructions_content column to context_snapshots if missing
   const hasBaseInstructionsCol = db
     .prepare(
@@ -651,10 +626,6 @@ function runMigrations(db: Database): void {
         auto_delete INTEGER NOT NULL DEFAULT 0,
         webhook_token TEXT,
         filesystem_watch_path TEXT,
-        success_count INTEGER NOT NULL DEFAULT 0,
-        error_count INTEGER NOT NULL DEFAULT 0,
-        last_run_at TEXT,
-        last_status TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -667,33 +638,6 @@ function runMigrations(db: Database): void {
 
       CREATE INDEX IF NOT EXISTS idx_pulses_conversation
         ON pulses(conversation_id);
-
-      CREATE TABLE IF NOT EXISTS pulse_runs (
-        id TEXT PRIMARY KEY,
-        pulse_id TEXT NOT NULL REFERENCES pulses(id) ON DELETE CASCADE,
-        conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-        trigger_source TEXT NOT NULL CHECK (trigger_source IN ('cron', 'webhook', 'filesystem', 'chain', 'manual', 'inactivity')),
-        started_at TEXT NOT NULL,
-        completed_at TEXT,
-        duration_ms INTEGER,
-        status TEXT NOT NULL CHECK (status IN ('running', 'success', 'error', 'skipped')),
-        result_summary TEXT,
-        error_message TEXT,
-        tool_calls_count INTEGER DEFAULT 0,
-        output_content TEXT,
-        chain_depth INTEGER NOT NULL DEFAULT 0,
-        chain_parent_run_id TEXT REFERENCES pulse_runs(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_pulse_runs_pulse
-        ON pulse_runs(pulse_id, completed_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_pulse_runs_status
-        ON pulse_runs(status);
-
-      CREATE INDEX IF NOT EXISTS idx_pulse_runs_conversation
-        ON pulse_runs(conversation_id);
     `);
     console.log("[DB] Created pulse tables");
   }
@@ -902,6 +846,256 @@ function runMigrations(db: Database): void {
       );
     }
     console.log("[DB] Created dm_whitelist table");
+  }
+
+  // Scheduler tables (durable job queue + schedule definitions)
+  // and the one-time migration from the legacy cron_job_runs + pulse_runs
+  // tables into the unified job_runs table.
+  initSchedulerTables(db);
+  migrateLegacyJobRuns(db);
+}
+
+/**
+ * One-time migration that folds two legacy tables into the unified
+ * scheduler tables and strips four denormalized columns off `pulses`.
+ *
+ * - `cron_job_runs` rows become `job_runs` rows with the handler set to
+ *   the new scheduler handler name (memory-daily → memory.summarize-daily,
+ *   identity-snapshot → identity.snapshot).
+ * - `pulse_runs` rows become `job_runs` rows with handler `pulse.execute`
+ *   and the pulse-specific context (pulseId, triggerSource, chain info)
+ *   carried in the JSON payload.
+ * - The `pulses` table is rebuilt without `success_count`, `error_count`,
+ *   `last_run_at`, and `last_status` — these are now derived from
+ *   `job_runs` on demand. The rebuild preserves all other data.
+ *
+ * Once the legacy tables are migrated they are dropped — no shims, no
+ * dual-write, no future cleanup pass needed.
+ */
+function migrateLegacyJobRuns(db: Database): void {
+  const hasCronJobRuns = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cron_job_runs'",
+    )
+    .get();
+
+  if (hasCronJobRuns) {
+    const rows = db
+      .prepare(
+        `SELECT job_id, started_at, completed_at, duration_ms, status, result, error
+         FROM cron_job_runs`,
+      )
+      .all<{
+        job_id: string;
+        started_at: string;
+        completed_at: string;
+        duration_ms: number;
+        status: string;
+        result: string | null;
+        error: string | null;
+      }>();
+
+    const handlerForJobId: Record<string, string> = {
+      "memory-daily": "memory.summarize-daily",
+      "identity-snapshot": "identity.snapshot",
+    };
+
+    let migrated = 0;
+    for (const row of rows) {
+      const handler = handlerForJobId[row.job_id] ?? `legacy.${row.job_id}`;
+      // schedule_id stays NULL on migrated rows — the live schedules
+      // don't exist yet (they're created on startup by the daemon).
+      // Setting them later would race with the daemon's defineSchedule
+      // calls; leaving them NULL means run history shows up under the
+      // handler column rather than linked to a schedule row. The admin
+      // UI groups by handler anyway, so nothing is lost.
+      db.exec(
+        `INSERT INTO job_runs (
+           id, schedule_id, handler, payload_json, status, attempt,
+           max_attempts, scheduled_for, started_at, completed_at, duration_ms,
+           result_summary, error_message, created_at
+         ) VALUES (?, NULL, ?, '{}', ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          handler,
+          row.status,
+          row.started_at,
+          row.started_at,
+          row.completed_at,
+          row.duration_ms,
+          row.result,
+          row.error,
+          row.started_at,
+        ],
+      );
+      migrated++;
+    }
+    db.exec("DROP TABLE cron_job_runs");
+    console.log(
+      `[DB] Migrated ${migrated} cron_job_runs row(s) into job_runs and dropped legacy table`,
+    );
+  }
+
+  const hasPulseRuns = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pulse_runs'",
+    )
+    .get();
+
+  if (hasPulseRuns) {
+    const rows = db
+      .prepare(
+        `SELECT id, pulse_id, conversation_id, trigger_source, started_at,
+                completed_at, duration_ms, status, result_summary, error_message,
+                tool_calls_count, output_content, chain_depth, chain_parent_run_id,
+                created_at
+         FROM pulse_runs`,
+      )
+      .all<{
+        id: string;
+        pulse_id: string;
+        conversation_id: string | null;
+        trigger_source: string;
+        started_at: string;
+        completed_at: string | null;
+        duration_ms: number | null;
+        status: string;
+        result_summary: string | null;
+        error_message: string | null;
+        tool_calls_count: number;
+        output_content: string | null;
+        chain_depth: number;
+        chain_parent_run_id: string | null;
+        created_at: string;
+      }>();
+
+    let migrated = 0;
+    const now = new Date().toISOString();
+    for (const row of rows) {
+      // Pulses that were 'running' when the previous process died become
+      // 'dead' with an explanatory message — they can't be safely retried
+      // because the LLM may have streamed a partial message to the chat.
+      const status = row.status === "running" ? "dead" : row.status;
+      const errorMessage = row.status === "running"
+        ? (row.error_message ??
+          "Reclaimed during scheduler migration; previous process exited mid-run")
+        : row.error_message;
+      const completedAt = row.status === "running" ? now : row.completed_at;
+
+      const payload = JSON.stringify({
+        pulseId: row.pulse_id,
+        triggerSource: row.trigger_source,
+        chainDepth: row.chain_depth,
+        chainParentRunId: row.chain_parent_run_id,
+        conversationId: row.conversation_id,
+        toolCallsCount: row.tool_calls_count,
+        outputContent: row.output_content,
+      });
+
+      // schedule_id stays NULL — see comment in the cron_job_runs branch.
+      db.exec(
+        `INSERT INTO job_runs (
+           id, schedule_id, handler, payload_json, status, attempt,
+           max_attempts, scheduled_for, started_at, completed_at, duration_ms,
+           result_summary, error_message, created_at
+         ) VALUES (?, NULL, 'pulse.execute', ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          row.id,
+          payload,
+          status,
+          row.started_at,
+          row.started_at,
+          completedAt,
+          row.duration_ms,
+          row.result_summary,
+          errorMessage,
+          row.created_at,
+        ],
+      );
+      migrated++;
+    }
+    db.exec("DROP TABLE pulse_runs");
+    console.log(
+      `[DB] Migrated ${migrated} pulse_runs row(s) into job_runs and dropped legacy table`,
+    );
+  }
+
+  // Strip the four denormalized columns off `pulses` if any remain.
+  const dyingCols = [
+    "success_count",
+    "error_count",
+    "last_run_at",
+    "last_status",
+  ];
+  const hasAnyDyingCol = dyingCols.some((col) =>
+    !!db
+      .prepare(
+        `SELECT 1 FROM pragma_table_info('pulses') WHERE name = '${col}'`,
+      )
+      .get()
+  );
+
+  if (hasAnyDyingCol) {
+    // SQLite ALTER TABLE DROP COLUMN works in 3.35+, but we rebuild the
+    // table to guarantee correctness on any SQLite version and to take
+    // the opportunity to ensure column ordering matches a fresh install.
+    db.exec("BEGIN");
+    try {
+      db.exec(`
+        CREATE TABLE pulses__new (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          prompt_text TEXT NOT NULL,
+          chat_mode TEXT NOT NULL DEFAULT 'visible' CHECK (chat_mode IN ('visible', 'silent')),
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          trigger_type TEXT NOT NULL DEFAULT 'cron' CHECK (trigger_type IN ('cron', 'inactivity', 'webhook', 'filesystem')),
+          cron_expression TEXT,
+          interval_seconds INTEGER,
+          random_interval_min INTEGER,
+          random_interval_max INTEGER,
+          run_at TEXT,
+          inactivity_threshold_seconds INTEGER,
+          chain_pulse_ids TEXT,
+          max_chain_depth INTEGER NOT NULL DEFAULT 3,
+          source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'entity')),
+          auto_delete INTEGER NOT NULL DEFAULT 0,
+          webhook_token TEXT,
+          filesystem_watch_path TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO pulses__new
+          (id, name, description, prompt_text, chat_mode, conversation_id, enabled,
+           trigger_type, cron_expression, interval_seconds, random_interval_min,
+           random_interval_max, run_at, inactivity_threshold_seconds, chain_pulse_ids,
+           max_chain_depth, source, auto_delete, webhook_token, filesystem_watch_path,
+           created_at, updated_at)
+          SELECT
+            id, name, description, prompt_text, chat_mode, conversation_id, enabled,
+            trigger_type, cron_expression, interval_seconds, random_interval_min,
+            random_interval_max, run_at, inactivity_threshold_seconds, chain_pulse_ids,
+            max_chain_depth, source, auto_delete, webhook_token, filesystem_watch_path,
+            created_at, updated_at
+          FROM pulses;
+
+        DROP TABLE pulses;
+        ALTER TABLE pulses__new RENAME TO pulses;
+
+        CREATE INDEX IF NOT EXISTS idx_pulses_enabled ON pulses(enabled);
+        CREATE INDEX IF NOT EXISTS idx_pulses_trigger_type ON pulses(trigger_type);
+        CREATE INDEX IF NOT EXISTS idx_pulses_conversation ON pulses(conversation_id);
+      `);
+      db.exec("COMMIT");
+      console.log(
+        "[DB] Rebuilt pulses table without denormalized run-stat columns",
+      );
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 

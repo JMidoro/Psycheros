@@ -4,6 +4,16 @@ All notable changes to entity-core are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-05-14
+
+### Changed
+
+- **Weekly / monthly / yearly consolidation routes through the durable
+  `@psycheros/scheduler`.** Schedules live in two new tables (`schedules` +
+  `job_runs`) co-located in `graph.db`. Fires missed while the MCP server was
+  down catch up on next boot with `fire_once_then_align` policy. The
+  `Deno.cron`-based wiring (and the `--unstable-cron` runtime flag) are gone.
+
 ## [0.1.2] - 2026-05-13
 
 ### Added

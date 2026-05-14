@@ -23,7 +23,8 @@ psycheros-workspace/
 │   ├── psycheros/         # harness daemon (port 3000) — embodiment
 │   ├── entity-core/       # MCP server (stdio) — canonical identity + memory
 │   ├── entity-loom/       # chat-history import wizard (port 3210)
-│   └── launcher/          # bootstrap installer + dashboard (port 3001)
+│   ├── launcher/          # bootstrap installer + dashboard (port 3001)
+│   └── scheduler/         # @psycheros/scheduler — shared durable job scheduler
 └── .github/workflows/     # multi-package CI matrix
 ```
 
@@ -33,6 +34,7 @@ psycheros-workspace/
 | `packages/entity-core` | [`packages/entity-core/CLAUDE.md`](packages/entity-core/CLAUDE.md)                          |
 | `packages/entity-loom` | [`packages/entity-loom/CLAUDE.md`](packages/entity-loom/CLAUDE.md)                          |
 | `packages/launcher`    | no per-package CLAUDE.md — see [`packages/launcher/README.md`](packages/launcher/README.md) |
+| `packages/scheduler`   | see [`packages/psycheros/docs/scheduler.md`](packages/psycheros/docs/scheduler.md)          |
 
 ## The cross-cutting truth
 

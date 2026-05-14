@@ -68,12 +68,8 @@ import {
   repairOrphanedSummaries,
 } from "../memory/mod.ts";
 import { DEFAULT_CUTOFF_HOUR } from "../memory/date-utils.ts";
-import {
-  initTracker,
-  registerJob,
-  registerTrigger,
-  tracked,
-} from "./cron-tracker.ts";
+import { Scheduler } from "@psycheros/scheduler";
+import type { HandlerResult } from "@psycheros/scheduler";
 import { getDisplayTimezone, localTimeToUtcCron } from "../pulse/timezone.ts";
 
 import type { MCPClient } from "../mcp-client/mod.ts";
@@ -352,6 +348,7 @@ export class Server {
   private entityCoreLLMSettings: EntityCoreLLMSettings;
   private customTools: Record<string, import("../tools/types.ts").Tool>;
   private pulseEngine: PulseEngine | null = null;
+  private scheduler: Scheduler | null = null;
   private deviceCache: DeviceStatusCache;
   private discordGatewayConfig: DiscordGatewayConfig;
   private discordGatewayClient: DiscordGatewayClient | null = null;
@@ -1141,21 +1138,127 @@ export class Server {
       }
     }
 
-    // Initialize cron tracker with DB for persistent execution history
-    initTracker(this.db);
+    // Set up the durable scheduler. It owns the `schedules` and `job_runs`
+    // tables and a 5-second ticker. Every scheduled or event-triggered
+    // task in Psycheros — daily memory summarization, identity snapshots,
+    // identity-change pushes to entity-core, every flavour of Pulse
+    // trigger — routes through it.
+    this.scheduler = new Scheduler({
+      db: this.db.getRawDb(),
+      workerId: `psycheros-${Deno.pid}-${Date.now()}`,
+    });
 
-    // Set up memory summarization cron job and catch-up on startup
+    // MCP identity sync — durable push (event-driven, one job per change)
+    // and scheduled pull (every 5 minutes).
+    if (this.mcpClient) {
+      const mcp = this.mcpClient;
+      mcp.setScheduler(this.scheduler);
+
+      this.scheduler.register("mcp.push-identity-change", async (ctx) => {
+        const { category, filename, content } = ctx.payload as {
+          category: "self" | "user" | "relationship" | "custom";
+          filename: string;
+          content: string;
+        };
+        await mcp.pushIdentityChange(category, filename, content);
+        return {
+          status: "success",
+          result: `Pushed ${category}/${filename}`,
+        };
+      });
+
+      this.scheduler.register("mcp.pull-canonical-identity", async () => {
+        await mcp.pull();
+        return { status: "success", result: "Pulled canonical identity" };
+      });
+      this.scheduler.defineSchedule({
+        id: "mcp-pull-canonical-identity",
+        kind: "recurring",
+        handler: "mcp.pull-canonical-identity",
+        intervalSeconds: 300,
+        catchupPolicy: "skip_missed",
+        maxAttempts: 3,
+        metadata: {
+          name: "MCP Canonical Identity Pull",
+          description: "Pull identity changes from entity-core every 5 minutes",
+        },
+      });
+    }
+
+    // Register memory summarization + identity snapshot handlers and
+    // schedules. Both depend on MCP being available; without an MCP
+    // connection there are no canonical memories to summarize into and
+    // no canonical identity store to snapshot.
     if (this.config.memoryEnabled !== false && this.mcpClient) {
-      // Memory timezone config: use display timezone for local-timezone-aware
-      // message grouping and cron scheduling. Falls back to PSYCHEROS_MEMORY_HOUR at UTC.
       const memoryTz = getDisplayTimezone();
       const memoryConfig = memoryTz
         ? { timezone: memoryTz, cutoffHour: DEFAULT_CUTOFF_HOUR }
         : undefined;
-
-      // Repair orphaned DB records then catch up on missed summarizations.
-      // Repair must complete first so cleared records become eligible for regeneration.
       const mcp = this.mcpClient;
+
+      let memoryCronPattern: string;
+      if (memoryTz) {
+        const { utcHour, utcMin } = localTimeToUtcCron(
+          DEFAULT_CUTOFF_HOUR,
+          0,
+          memoryTz,
+        );
+        memoryCronPattern = `${utcMin} ${utcHour} * * *`;
+        console.log(
+          `[Memory] Timezone-aware scheduling: daily summary at ${DEFAULT_CUTOFF_HOUR}:00 ${memoryTz} (${utcHour}:${
+            String(utcMin).padStart(2, "0")
+          } UTC)`,
+        );
+      } else {
+        const memoryHour = parseInt(
+          Deno.env.get("PSYCHEROS_MEMORY_HOUR") || "4",
+        );
+        memoryCronPattern = `0 ${memoryHour} * * *`;
+        console.log(
+          `[Memory] No timezone configured, using UTC fallback: daily summary at ${memoryHour}:00 UTC`,
+        );
+      }
+
+      // Same body runs both as the scheduled handler and as the
+      // startup catch-up — catchUpSummarization is idempotent on dates
+      // it has already summarized.
+      const runDailySummarization = async (): Promise<HandlerResult> => {
+        const count = await catchUpSummarization(
+          this.db,
+          mcp,
+          this.config.projectRoot,
+          memoryConfig,
+          this.getActiveLLMProfile() ?? undefined,
+        );
+        return {
+          status: "success",
+          result: count > 0
+            ? `Summarized ${count} day(s)`
+            : "No unsummarized dates found",
+        };
+      };
+
+      this.scheduler.register(
+        "memory.summarize-daily",
+        () => runDailySummarization(),
+      );
+      this.scheduler.defineSchedule({
+        id: "memory-daily",
+        kind: "recurring",
+        handler: "memory.summarize-daily",
+        cronExpr: memoryCronPattern,
+        catchupPolicy: "fire_once_then_align",
+        maxAttempts: 1,
+        metadata: {
+          name: "Daily Memory Summarization",
+          description: "Summarize conversations into daily memory files",
+          manualTrigger: true,
+        },
+      });
+
+      // Startup integrity check + first summarization pass. Fire-and-forget
+      // so it doesn't gate the HTTP server coming up; the scheduler will
+      // still fire on schedule regardless.
       (async () => {
         try {
           await repairOrphanedSummaries(this.db, mcp);
@@ -1166,13 +1269,7 @@ export class Server {
           );
         }
         try {
-          await catchUpSummarization(
-            this.db,
-            mcp,
-            this.config.projectRoot,
-            memoryConfig,
-            this.getActiveLLMProfile() ?? undefined,
-          );
+          await runDailySummarization();
         } catch (error) {
           console.error(
             "[Memory] Startup catch-up failed:",
@@ -1181,93 +1278,52 @@ export class Server {
         }
       })();
 
-      // Set up daily cron job
-      let cronPattern: string;
-      if (memoryTz) {
-        // Convert 5 AM local to UTC for the cron expression
-        const { utcHour, utcMin } = localTimeToUtcCron(
-          DEFAULT_CUTOFF_HOUR,
-          0,
-          memoryTz,
-        );
-        cronPattern = `${utcMin} ${utcHour} * * *`;
-        console.log(
-          `[Memory] Timezone-aware scheduling: daily summary at ${DEFAULT_CUTOFF_HOUR}:00 ${memoryTz} (${utcHour}:${
-            String(utcMin).padStart(2, "0")
-          } UTC)`,
-        );
-      } else {
-        // Fallback: use PSYCHEROS_MEMORY_HOUR at UTC (default 4 AM)
-        const memoryHour = parseInt(
-          Deno.env.get("PSYCHEROS_MEMORY_HOUR") || "4",
-        );
-        cronPattern = `0 ${memoryHour} * * *`;
-        console.log(
-          `[Memory] No timezone configured, using UTC fallback: daily summary at ${memoryHour}:00 UTC`,
-        );
-      }
+      // Weekly / monthly / yearly consolidation runs in entity-core, not
+      // here — see packages/entity-core/src/mod.ts.
 
-      // Shared handler for daily summarization (used by both cron and manual trigger)
-      const dailySummarizationHandler = async (): Promise<string> => {
-        const count = await catchUpSummarization(
-          this.db,
-          mcp,
-          this.config.projectRoot,
-          memoryConfig,
-          this.getActiveLLMProfile() ?? undefined,
-        );
-        return count > 0
-          ? `Summarized ${count} day(s)`
-          : "No unsummarized dates found";
-      };
-
-      registerJob(
-        "memory-daily",
-        "Daily Memory Summarization",
-        cronPattern,
-        "Summarize conversations into daily memory files",
-      );
-      Deno.cron(
-        "memory-daily-summarization",
-        cronPattern,
-        tracked("memory-daily", dailySummarizationHandler),
-      );
-
-      // Note: Weekly, monthly, and yearly consolidation now runs in entity-core
-      // via its own cron jobs, not here.
-
-      // Daily identity snapshot - runs at configured hour (default 3 AM)
       const snapshotHour = parseInt(
         Deno.env.get("PSYCHEROS_SNAPSHOT_HOUR") || "3",
       );
-      const snapshotHandler = async (): Promise<string> => {
-        // Snapshots must go through MCP so they land in entity-core's data directory
-        // (the canonical location the UI reads from). If MCP is unavailable, skip —
-        // creating local-only snapshots would be invisible to the UI.
+
+      const runIdentitySnapshot = async (): Promise<HandlerResult> => {
+        // Snapshots must go through MCP so they land in entity-core's
+        // canonical data directory. If MCP is unavailable I skip rather
+        // than create local-only snapshots the UI never reads.
         if (!this.mcpClient) {
-          return "Skipped: MCP not connected (snapshots require entity-core)";
+          return {
+            status: "skipped",
+            result: "MCP not connected (snapshots require entity-core)",
+          };
         }
         const result = await this.mcpClient.createSnapshot();
         if (result.success) {
           const count = result.snapshots?.length ?? 0;
-          return `Created ${count} snapshots via MCP (cleanup handled by entity-core)`;
+          return {
+            status: "success",
+            result:
+              `Created ${count} snapshots via MCP (cleanup handled by entity-core)`,
+          };
         }
-        return `Failed: ${result.error || "Unknown error"}`;
+        throw new Error(result.error || "Unknown error");
       };
 
-      registerJob(
-        "identity-snapshot",
-        "Daily Identity Snapshot",
-        `0 ${snapshotHour} * * *`,
-        "Snapshot identity files and clean up old snapshots",
-        true,
+      this.scheduler.register(
+        "identity.snapshot",
+        () => runIdentitySnapshot(),
       );
-      registerTrigger("identity-snapshot", snapshotHandler);
-      Deno.cron(
-        "identity-daily-snapshot",
-        `0 ${snapshotHour} * * *`,
-        tracked("identity-snapshot", snapshotHandler),
-      );
+      this.scheduler.defineSchedule({
+        id: "identity-snapshot",
+        kind: "recurring",
+        handler: "identity.snapshot",
+        cronExpr: `0 ${snapshotHour} * * *`,
+        catchupPolicy: "fire_once_then_align",
+        maxAttempts: 1,
+        metadata: {
+          name: "Daily Identity Snapshot",
+          description: "Snapshot identity files and clean up old snapshots",
+          manualTrigger: true,
+        },
+      });
     }
 
     // Start keepalive timer for persistent SSE connections
@@ -1279,9 +1335,11 @@ export class Server {
     // Start device status cache refresh for SA system
     this.deviceCache.start();
 
-    // Initialize Pulse engine for autonomous entity prompts
+    // Initialize Pulse engine for autonomous entity prompts. The engine
+    // registers its `pulse.execute` handler with the scheduler in start().
     this.pulseEngine = new PulseEngine(
       this.db,
+      this.scheduler,
       () => this.llm,
       () => this.tools,
       {
@@ -1305,6 +1363,9 @@ export class Server {
 
     // Wire pulse engine into the entity-facing pulse tool
     setPulseEngine(this.pulseEngine);
+
+    // All handlers registered — start the scheduler ticker.
+    this.scheduler.start();
 
     // Initialize Discord Gateway if enabled (non-blocking — don't prevent HTTP server start)
     this.startDiscordGateway().catch((error) => {
@@ -1345,6 +1406,11 @@ export class Server {
       this.pulseEngine.stop();
     }
 
+    // Stop the scheduler — clears the ticker and aborts in-flight handlers.
+    if (this.scheduler) {
+      this.scheduler.stop();
+    }
+
     // Stop device status cache refresh
     this.deviceCache.stop();
 
@@ -1375,6 +1441,7 @@ export class Server {
       lorebookManager: this.lorebookManager,
       vaultManager: this.vaultManager,
       pulseEngine: this.pulseEngine ?? undefined,
+      scheduler: this.scheduler ?? undefined,
       getLLMSettings: () => this.getLLMSettings(),
       updateLLMSettings: (settings) => this.updateLLMSettings(settings),
       getLLMProfileSettings: () => this.llmProfileSettings,

@@ -105,7 +105,7 @@ if (mcpEnabled) {
   const entityCoreRoot = Deno.env.get("PSYCHEROS_ENTITY_CORE_PATH") ||
     join(config.projectRoot, "..", "entity-core");
   const mcpArgsStr = Deno.env.get("PSYCHEROS_MCP_ARGS") ||
-    `run -A --unstable-cron ${entityCoreRoot}/src/mod.ts`;
+    `run -A ${entityCoreRoot}/src/mod.ts`;
   const mcpArgs = mcpArgsStr.split(" ");
   const mcpInstance = Deno.env.get("PSYCHEROS_MCP_INSTANCE") || "psycheros";
   const entityCoreDataDir = Deno.env.get("PSYCHEROS_ENTITY_CORE_DATA_DIR") ||
@@ -142,7 +142,6 @@ if (mcpEnabled) {
       ZAI_MODEL: Deno.env.get("ZAI_MODEL") || "",
     },
     syncOnStartup: true,
-    syncInterval: 5 * 60 * 1000, // 5 minutes
     offlineFallback: true,
     localBasePath: config.projectRoot,
   });

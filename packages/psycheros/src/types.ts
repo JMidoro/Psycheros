@@ -266,6 +266,10 @@ export interface ContextSnapshotRecord {
 /**
  * A Pulse is a user- or entity-defined prompt that executes on a schedule
  * or in response to external triggers, enabling the entity to act autonomously.
+ *
+ * Run statistics (success/error counts, last run timestamp, last status)
+ * are derived on demand from the scheduler's `job_runs` table — see
+ * {@link PulseStats} and `DBClient.getPulseStats()`.
  */
 export interface PulseRow {
   id: string;
@@ -288,12 +292,46 @@ export interface PulseRow {
   autoDelete: boolean;
   webhookToken: string | null;
   filesystemWatchPath: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Derived run statistics for a pulse, computed from the scheduler's
+ * `job_runs` table on demand. Returned by `DBClient.getPulseStats()`.
+ */
+export interface PulseStats {
   successCount: number;
   errorCount: number;
   lastRunAt: string | null;
+  lastCompletedAt: string | null;
   lastStatus: string | null;
+  lastDurationMs: number | null;
+  lastResult: string | null;
+  lastError: string | null;
+}
+
+/**
+ * Projection of a single pulse execution from the scheduler's `job_runs`
+ * table. Returned by `DBClient.listPulseRuns()` and `getPulseRun()` so
+ * the existing pulse history UI keeps working unchanged.
+ */
+export interface PulseRunRow {
+  id: string;
+  pulseId: string;
+  conversationId: string | null;
+  triggerSource: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  status: string;
+  resultSummary: string | null;
+  errorMessage: string | null;
+  toolCallsCount: number;
+  outputContent: string | null;
+  chainDepth: number;
+  chainParentRunId: string | null;
   createdAt: string;
-  updatedAt: string;
 }
 
 /** Input for creating a new Pulse. */
@@ -338,23 +376,4 @@ export interface UpdatePulseInput {
   maxChainDepth?: number;
   autoDelete?: boolean;
   filesystemWatchPath?: string | null;
-}
-
-/** A record of a single Pulse execution. */
-export interface PulseRunRow {
-  id: string;
-  pulseId: string;
-  conversationId: string | null;
-  triggerSource: string;
-  startedAt: string;
-  completedAt: string | null;
-  durationMs: number | null;
-  status: string;
-  resultSummary: string | null;
-  errorMessage: string | null;
-  toolCallsCount: number;
-  outputContent: string | null;
-  chainDepth: number;
-  chainParentRunId: string | null;
-  createdAt: string;
 }

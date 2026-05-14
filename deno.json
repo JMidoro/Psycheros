@@ -1,11 +1,15 @@
 {
   "workspace": [
+    "./packages/scheduler",
     "./packages/psycheros",
     "./packages/entity-core",
     "./packages/entity-loom",
     "./packages/launcher"
   ],
   "nodeModulesDir": "auto",
+  "tasks": {
+    "test": "deno test -A packages/scheduler/tests/ packages/psycheros/tests/"
+  },
   "imports": {
     "@std/path": "jsr:@std/path@^1",
     "@std/async": "jsr:@std/async@^1",

@@ -15,6 +15,7 @@ import type {
   Message,
   PulseRow,
   PulseRunRow,
+  PulseStats,
   ToolCall,
   TurnMetrics,
   UpdatePulseInput,
@@ -1466,7 +1467,8 @@ export class DBClient {
   // ===========================================================================
 
   /**
-   * Row type for pulses as stored in SQLite.
+   * Row type for pulses as stored in SQLite. Run statistics are no longer
+   * carried on this row — see {@link DBClient.getPulseStats}.
    */
   private static pulseRowToPulse(row: Record<string, unknown>): PulseRow {
     return {
@@ -1497,10 +1499,6 @@ export class DBClient {
       autoDelete: (row.auto_delete as number) === 1,
       webhookToken: (row.webhook_token as string) ?? null,
       filesystemWatchPath: (row.filesystem_watch_path as string) ?? null,
-      successCount: row.success_count as number,
-      errorCount: row.error_count as number,
-      lastRunAt: (row.last_run_at as string) ?? null,
-      lastStatus: (row.last_status as string) ?? null,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
@@ -1581,8 +1579,8 @@ export class DBClient {
         trigger_type, cron_expression, interval_seconds, random_interval_min,
         random_interval_max, run_at, inactivity_threshold_seconds, chain_pulse_ids,
         max_chain_depth, source, auto_delete, webhook_token, filesystem_watch_path,
-        success_count, error_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.name,
@@ -1671,121 +1669,64 @@ export class DBClient {
   }
 
   /**
-   * Delete a pulse and its runs.
+   * Delete a pulse. Run history in `job_runs` is left in place (the
+   * foreign key sets schedule_id to NULL); deleting the pulse only
+   * cleans up the definition.
    */
   deletePulse(id: string): boolean {
-    // Delete runs first (virtual table has no CASCADE)
-    this.db.exec("DELETE FROM pulse_runs WHERE pulse_id = ?", [id]);
     const result = this.db.exec("DELETE FROM pulses WHERE id = ?", [id]);
     return result > 0;
   }
 
-  /**
-   * Increment pulse success/error counts and update last run info.
-   */
-  updatePulseRunStats(id: string, status: "success" | "error"): void {
-    const field = status === "success" ? "success_count" : "error_count";
-    this.db.exec(
-      `UPDATE pulses SET ${field} = ${field} + 1, last_run_at = ?, last_status = ?, updated_at = ? WHERE id = ?`,
-      [new Date().toISOString(), status, new Date().toISOString(), id],
-    );
-  }
-
   // ===========================================================================
-  // Pulse Run Operations
+  // Pulse Run Projections (over job_runs)
   // ===========================================================================
+  //
+  // The scheduler's `job_runs` table is the source of truth for every pulse
+  // execution. These helpers project rows into the UI-facing PulseRunRow /
+  // PulseStats shapes so existing routes and templates keep working without
+  // change.
 
-  /**
-   * Create a new pulse run record.
-   */
-  addPulseRun(data: {
-    pulseId: string;
-    conversationId: string | null;
-    triggerSource: string;
-    chainDepth?: number;
-    chainParentRunId?: string | null;
-  }): string {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    this.db.exec(
-      `INSERT INTO pulse_runs
-       (id, pulse_id, conversation_id, trigger_source, started_at, status,
-        tool_calls_count, chain_depth, chain_parent_run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, 'running', 0, ?, ?, ?)`,
-      [
-        id,
-        data.pulseId,
-        data.conversationId ?? null,
-        data.triggerSource,
-        now,
-        data.chainDepth ?? 0,
-        data.chainParentRunId ?? null,
-        now,
-      ],
-    );
-
-    return id;
-  }
-
-  /**
-   * Complete a pulse run with results.
-   */
-  completePulseRun(id: string, data: {
-    status: "success" | "error" | "skipped";
-    resultSummary?: string | null;
-    errorMessage?: string | null;
-    toolCallsCount?: number;
-    outputContent?: string | null;
-  }): void {
-    this.db.exec(
-      `UPDATE pulse_runs SET status = ?, completed_at = ?,
-        duration_ms = CAST((julianday('now') - julianday((SELECT started_at FROM pulse_runs WHERE id = ?)) * 86400000) AS INTEGER),
-        result_summary = ?, error_message = ?, tool_calls_count = ?,
-        output_content = ?
-       WHERE id = ?`,
-      [
-        data.status,
-        new Date().toISOString(),
-        id,
-        data.resultSummary ?? null,
-        data.errorMessage ?? null,
-        data.toolCallsCount ?? 0,
-        data.outputContent ?? null,
-        id,
-      ],
-    );
-  }
-
-  /**
-   * Get a single pulse run by ID.
-   */
-  getPulseRun(id: string): PulseRunRow | null {
-    const stmt = this.db.prepare("SELECT * FROM pulse_runs WHERE id = ?");
-    const row = stmt.get(id) as Record<string, unknown> | undefined;
-    stmt.finalize();
-    if (!row) return null;
+  private static pulseRunFromJobRun(
+    row: Record<string, unknown>,
+  ): PulseRunRow {
+    const payload = row.payload_json
+      ? JSON.parse(row.payload_json as string) as Record<string, unknown>
+      : {};
     return {
       id: row.id as string,
-      pulseId: row.pulse_id as string,
-      conversationId: (row.conversation_id as string) ?? null,
-      triggerSource: row.trigger_source as string,
-      startedAt: row.started_at as string,
+      pulseId: (payload.pulseId as string) ?? "",
+      conversationId: (payload.conversationId as string) ?? null,
+      triggerSource: (payload.triggerSource as string) ?? "cron",
+      startedAt: (row.started_at as string) ?? (row.scheduled_for as string),
       completedAt: (row.completed_at as string) ?? null,
       durationMs: (row.duration_ms as number) ?? null,
       status: row.status as string,
       resultSummary: (row.result_summary as string) ?? null,
       errorMessage: (row.error_message as string) ?? null,
-      toolCallsCount: (row.tool_calls_count as number) ?? 0,
-      outputContent: (row.output_content as string) ?? null,
-      chainDepth: row.chain_depth as number,
-      chainParentRunId: (row.chain_parent_run_id as string) ?? null,
+      toolCallsCount: (payload.toolCallsCount as number) ?? 0,
+      outputContent: (payload.outputContent as string) ?? null,
+      chainDepth: (payload.chainDepth as number) ?? 0,
+      chainParentRunId: (payload.chainParentRunId as string) ?? null,
       createdAt: row.created_at as string,
     };
   }
 
   /**
-   * List pulse runs with pagination and optional filtering.
+   * Fetch a single pulse run by job_run id.
+   */
+  getPulseRun(id: string): PulseRunRow | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM job_runs WHERE id = ? AND handler = 'pulse.execute'",
+    );
+    const row = stmt.get(id) as Record<string, unknown> | undefined;
+    stmt.finalize();
+    return row ? DBClient.pulseRunFromJobRun(row) : null;
+  }
+
+  /**
+   * List pulse runs with optional filtering. Projected from `job_runs`
+   * where `handler = 'pulse.execute'`.
    */
   listPulseRuns(filter?: {
     pulseId?: string;
@@ -1796,20 +1737,20 @@ export class DBClient {
     const limit = filter?.limit ?? 50;
     const offset = filter?.offset ?? 0;
 
-    let whereClause = "";
+    const where: string[] = ["handler = 'pulse.execute'"];
     const params: unknown[] = [];
-
     if (filter?.pulseId) {
-      whereClause += "WHERE pulse_id = ?";
+      where.push("json_extract(payload_json, '$.pulseId') = ?");
       params.push(filter.pulseId);
     }
     if (filter?.status) {
-      whereClause += whereClause ? " AND status = ?" : "WHERE status = ?";
+      where.push("status = ?");
       params.push(filter.status);
     }
+    const whereClause = `WHERE ${where.join(" AND ")}`;
 
     const countStmt = this.db.prepare(
-      `SELECT COUNT(*) as count FROM pulse_runs ${whereClause}`,
+      `SELECT COUNT(*) as count FROM job_runs ${whereClause}`,
     );
     const total =
       (countStmt.get(...(params as BindValue[])) as { count: number })?.count ??
@@ -1817,38 +1758,67 @@ export class DBClient {
     countStmt.finalize();
 
     const stmt = this.db.prepare(
-      `SELECT * FROM pulse_runs ${whereClause} ORDER BY started_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM job_runs ${whereClause}
+       ORDER BY COALESCE(started_at, scheduled_for) DESC, id DESC
+       LIMIT ? OFFSET ?`,
     );
-    const rows = stmt.all(...(params as BindValue[]), limit, offset) as Record<
-      string,
-      unknown
-    >[];
+    const rows = stmt.all(
+      ...(params as BindValue[]),
+      limit,
+      offset,
+    ) as Record<string, unknown>[];
     stmt.finalize();
 
-    const runs: PulseRunRow[] = rows.map((row) => ({
-      id: row.id as string,
-      pulseId: row.pulse_id as string,
-      conversationId: (row.conversation_id as string) ?? null,
-      triggerSource: row.trigger_source as string,
-      startedAt: row.started_at as string,
-      completedAt: (row.completed_at as string) ?? null,
-      durationMs: (row.duration_ms as number) ?? null,
-      status: row.status as string,
-      resultSummary: (row.result_summary as string) ?? null,
-      errorMessage: (row.error_message as string) ?? null,
-      toolCallsCount: (row.tool_calls_count as number) ?? 0,
-      outputContent: (row.output_content as string) ?? null,
-      chainDepth: row.chain_depth as number,
-      chainParentRunId: (row.chain_parent_run_id as string) ?? null,
-      createdAt: row.created_at as string,
-    }));
-
-    return { runs, total };
+    return { runs: rows.map(DBClient.pulseRunFromJobRun), total };
   }
 
   /**
-   * Get the timestamp of the most recent user message across all conversations.
-   * Used by the inactivity trigger system.
+   * Aggregate run statistics for a pulse, derived from `job_runs`.
+   * Replaces the old denormalized columns on `pulses`.
+   */
+  getPulseStats(pulseId: string): PulseStats {
+    const aggStmt = this.db.prepare(
+      `SELECT
+         SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS s,
+         SUM(CASE WHEN status IN ('error', 'dead') THEN 1 ELSE 0 END) AS e
+       FROM job_runs
+       WHERE handler = 'pulse.execute'
+         AND json_extract(payload_json, '$.pulseId') = ?`,
+    );
+    const agg = aggStmt.get(pulseId) as
+      | { s: number | null; e: number | null }
+      | undefined;
+    aggStmt.finalize();
+
+    const latestStmt = this.db.prepare(
+      `SELECT started_at, completed_at, status, duration_ms,
+              result_summary, error_message
+       FROM job_runs
+       WHERE handler = 'pulse.execute'
+         AND json_extract(payload_json, '$.pulseId') = ?
+         AND completed_at IS NOT NULL
+       ORDER BY completed_at DESC LIMIT 1`,
+    );
+    const latest = latestStmt.get(pulseId) as
+      | Record<string, unknown>
+      | undefined;
+    latestStmt.finalize();
+
+    return {
+      successCount: agg?.s ?? 0,
+      errorCount: agg?.e ?? 0,
+      lastRunAt: (latest?.started_at as string) ?? null,
+      lastCompletedAt: (latest?.completed_at as string) ?? null,
+      lastStatus: (latest?.status as string) ?? null,
+      lastDurationMs: (latest?.duration_ms as number) ?? null,
+      lastResult: (latest?.result_summary as string) ?? null,
+      lastError: (latest?.error_message as string) ?? null,
+    };
+  }
+
+  /**
+   * Get the timestamp of the most recent user message across all
+   * conversations. Used by the inactivity trigger eligibility check.
    */
   getLastUserMessageTimestamp(): string | null {
     const stmt = this.db.prepare(
@@ -1864,6 +1834,7 @@ export class DBClient {
 
   /**
    * Detect if a chain would create a cycle by walking the parent run chain.
+   * Parent run IDs are scheduler job_run ids.
    */
   detectPulseChainCycle(pulseId: string, parentRunId: string | null): boolean {
     if (!parentRunId) return false;
@@ -1962,127 +1933,5 @@ export class DBClient {
    */
   getRawDb(): Database {
     return this.db;
-  }
-
-  // ===========================================================================
-  // Cron Job Run Operations
-  // ===========================================================================
-
-  /**
-   * Record a cron job execution.
-   */
-  addJobRun(
-    jobId: string,
-    startedAt: string,
-    completedAt: string,
-    durationMs: number,
-    status: "success" | "error",
-    result: string | null,
-    error: string | null,
-  ): void {
-    this.db.exec(
-      `INSERT INTO cron_job_runs (job_id, started_at, completed_at, duration_ms, status, result, error)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [jobId, startedAt, completedAt, durationMs, status, result, error],
-    );
-
-    // Keep only last 100 runs per job to prevent unbounded growth
-    this.db.exec(
-      `DELETE FROM cron_job_runs WHERE job_id = ? AND id NOT IN (
-         SELECT id FROM cron_job_runs WHERE job_id = ? ORDER BY completed_at DESC LIMIT 100
-       )`,
-      [jobId, jobId],
-    );
-  }
-
-  /**
-   * Get the most recent run for each job ID.
-   * Used to hydrate the cron tracker on startup.
-   */
-  getLatestJobRuns(): Array<{
-    jobId: string;
-    startedAt: string;
-    completedAt: string;
-    durationMs: number;
-    status: "success" | "error";
-    result: string | null;
-    error: string | null;
-    successCount: number;
-    errorCount: number;
-  }> {
-    const stmt = this.db.prepare(
-      `SELECT
-         job_id,
-         started_at,
-         completed_at,
-         duration_ms,
-         status,
-         result,
-         error,
-         (SELECT COUNT(*) FROM cron_job_runs r2 WHERE r2.job_id = r1.job_id AND r2.status = 'success') as success_count,
-         (SELECT COUNT(*) FROM cron_job_runs r2 WHERE r2.job_id = r1.job_id AND r2.status = 'error') as error_count
-       FROM cron_job_runs r1
-       WHERE r1.id = (SELECT MAX(id) FROM cron_job_runs r3 WHERE r3.job_id = r1.job_id)
-       ORDER BY r1.job_id`,
-    );
-    const rows = stmt.all<{
-      job_id: string;
-      started_at: string;
-      completed_at: string;
-      duration_ms: number;
-      status: string;
-      result: string | null;
-      error: string | null;
-      success_count: number;
-      error_count: number;
-    }>();
-    stmt.finalize();
-
-    return rows.map((row) => ({
-      jobId: row.job_id,
-      startedAt: row.started_at,
-      completedAt: row.completed_at,
-      durationMs: row.duration_ms,
-      status: row.status as "success" | "error",
-      result: row.result,
-      error: row.error,
-      successCount: row.success_count,
-      errorCount: row.error_count,
-    }));
-  }
-
-  /**
-   * Get recent runs for a specific job.
-   */
-  getJobRunHistory(jobId: string, limit = 20): Array<{
-    startedAt: string;
-    completedAt: string;
-    durationMs: number;
-    status: "success" | "error";
-    result: string | null;
-    error: string | null;
-  }> {
-    const stmt = this.db.prepare(
-      `SELECT started_at, completed_at, duration_ms, status, result, error
-       FROM cron_job_runs WHERE job_id = ? ORDER BY completed_at DESC LIMIT ?`,
-    );
-    const rows = stmt.all<{
-      started_at: string;
-      completed_at: string;
-      duration_ms: number;
-      status: string;
-      result: string | null;
-      error: string | null;
-    }>(jobId, limit);
-    stmt.finalize();
-
-    return rows.map((row) => ({
-      startedAt: row.started_at,
-      completedAt: row.completed_at,
-      durationMs: row.duration_ms,
-      status: row.status as "success" | "error",
-      result: row.result,
-      error: row.error,
-    }));
   }
 }

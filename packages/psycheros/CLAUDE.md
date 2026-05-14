@@ -70,7 +70,7 @@ A state-change function returns `{ success, data, affectedRegions }`, and
 
 - **Synchronous** (during a chat turn): return the state-change result from the
   tool — it flows through the chat stream.
-- **Background** (Pulse, gateway, cron): call
+- **Background** (Pulse, gateway, scheduler handler): call
   `getBroadcaster().broadcastUpdates()` on the persistent SSE channel
   (`GET /api/events`).
 
@@ -115,6 +115,16 @@ user message is always preserved. Budget =
 `contextLength - maxTokens - 5% safety margin`. Trimming and sanitization in
 `src/entity/token-budget.ts`, applied in `EntityTurn.buildMessages()`.
 
+## Scheduled work
+
+Every scheduled or event-triggered task — daily memory summarization, identity
+snapshots, MCP identity-change pushes, every flavour of Pulse trigger — routes
+through the durable scheduler in [`@psycheros/scheduler`](../scheduler/). One
+process-local instance lives on `PsycherosServer.scheduler`. Schedules and run
+history live in `schedules` and `job_runs` in the main SQLite database. See
+[`docs/scheduler.md`](docs/scheduler.md) for catch-up policies, registered
+handlers, and operational details.
+
 ## Deep references
 
 | Topic                             | Doc                                                |
@@ -125,6 +135,7 @@ user message is always preserved. Budget =
 | Memory + RAG (chat, vault, graph) | [docs/memory-and-rag.md](docs/memory-and-rag.md)   |
 | UI features                       | [docs/ui-features.md](docs/ui-features.md)         |
 | API endpoints, SSE architecture   | [docs/api-reference.md](docs/api-reference.md)     |
+| Durable scheduler                 | [docs/scheduler.md](docs/scheduler.md)             |
 | Security audit                    | [docs/security-audit.md](docs/security-audit.md)   |
 
 External Connections (Discord, web search, home, intimacy), Vision (image gen,

@@ -19,10 +19,11 @@ import {
   localWeeklyToUtcCron,
 } from "../pulse/timezone.ts";
 
-// The PulseEngine instance is set at server startup
+// The PulseEngine instance is set at server startup. Typed narrowly here
+// so this module doesn't pull a circular dependency on the engine file.
 let pulseEngine: {
   registerTriggers(pulse: PulseRow): void;
-  executePulse(
+  triggerPulse(
     pulseId: string,
     triggerSource:
       | "cron"
@@ -31,9 +32,9 @@ let pulseEngine: {
       | "chain"
       | "manual"
       | "inactivity",
-    chainDepth: number,
-    parentRunId: string | null,
-  ): Promise<void>;
+    chainDepth?: number,
+    parentRunId?: string | null,
+  ): unknown;
 } | null = null;
 
 /**
@@ -358,11 +359,8 @@ function executeTrigger(
     });
   }
 
-  // Fire and forget
   if (pulseEngine) {
-    pulseEngine.executePulse(pulseId, "manual", 0, null).catch((err) => {
-      console.error(`[Pulse] Tool-triggered execution error:`, err);
-    });
+    pulseEngine.triggerPulse(pulseId, "manual", 0, null);
   }
 
   return Promise.resolve({

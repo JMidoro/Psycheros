@@ -7,7 +7,14 @@
  * @module
  */
 
-import type { PulseRow, PulseRunRow } from "../types.ts";
+import type { PulseRow, PulseRunRow, PulseStats } from "../types.ts";
+
+/**
+ * Callable that returns derived run statistics for a pulse. The route
+ * passes `db.getPulseStats` here so templates don't bind to the db
+ * directly.
+ */
+export type PulseStatsLookup = (pulseId: string) => PulseStats;
 import {
   formatUtcIsoToLocalDatetimeLocal,
   getDisplayTimezone,
@@ -259,7 +266,10 @@ export function renderPulseHubCard(): string {
 // Main Pulse View
 // =============================================================================
 
-export function renderPulseSettings(pulses: PulseRow[]): string {
+export function renderPulseSettings(
+  pulses: PulseRow[],
+  getStats: PulseStatsLookup,
+): string {
   return `<div class="settings-view">
   <div class="settings-header">
     <a class="settings-back-btn" onclick="htmx.ajax('GET', '/fragments/settings', {target: '#chat', swap: 'innerHTML'})">
@@ -283,7 +293,7 @@ export function renderPulseSettings(pulses: PulseRow[]): string {
   </div>
   <div class="settings-content" id="settings-content">
   <div id="pulse-prompts" class="tab-content">
-    ${renderPulseList(pulses)}
+    ${renderPulseList(pulses, getStats)}
   </div>
   <div id="pulse-log" class="tab-content" style="display:none">
     <div id="pulse-log-content"
@@ -298,18 +308,23 @@ export function renderPulseSettings(pulses: PulseRow[]): string {
 // Pulse List
 // =============================================================================
 
-export function renderPulseList(pulses: PulseRow[]): string {
+export function renderPulseList(
+  pulses: PulseRow[],
+  getStats: PulseStatsLookup,
+): string {
   if (pulses.length === 0) {
     return `<div class="empty-state">
       <p>No Pulses yet. Create one to schedule autonomous entity behavior.</p>
     </div>`;
   }
 
-  const items = pulses.map((p) => renderPulseItem(p)).join("\n");
+  const items = pulses.map((p) => renderPulseItem(p, getStats(p.id))).join(
+    "\n",
+  );
   return `<div class="pulse-list">${items}</div>`;
 }
 
-function renderPulseItem(pulse: PulseRow): string {
+function renderPulseItem(pulse: PulseRow, stats: PulseStats): string {
   const statusBadge = pulse.enabled
     ? `<span class="badge badge-success">Active</span>`
     : `<span class="badge badge-muted">Disabled</span>`;
@@ -336,8 +351,8 @@ function renderPulseItem(pulse: PulseRow): string {
       : ""
   }
     <div class="autoprompt-meta">
-      <span>Last run: ${formatTimestamp(pulse.lastRunAt)}</span>
-      <span>OK: ${pulse.successCount} | Err: ${pulse.errorCount}</span>
+      <span>Last run: ${formatTimestamp(stats.lastRunAt)}</span>
+      <span>OK: ${stats.successCount} | Err: ${stats.errorCount}</span>
       ${
     pulse.chainPulseIds.length > 0
       ? `<span>Chain: ${pulse.chainPulseIds.length} linked</span>`
@@ -784,9 +799,12 @@ export function renderPulseLog(
   }
 
   const rows = runs.map((r) => {
+    // `dead` is the terminal-failure status from the scheduler (no more
+    // retries left); visually it's the same kind of failure as `error`.
+    // `skipped` and `pending`/`running` get the neutral muted badge.
     const statusClass = r.status === "success"
       ? "badge-success"
-      : r.status === "error"
+      : r.status === "error" || r.status === "dead"
       ? "badge-error"
       : "badge-muted";
 

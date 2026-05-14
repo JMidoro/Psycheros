@@ -43,8 +43,11 @@ Snapshots are automatically cleaned up after the configured retention period.
 | ------------------------------------- | ------- | --------------------------------------- |
 | `ENTITY_CORE_SNAPSHOT_RETENTION_DAYS` | `30`    | Days to retain snapshots before cleanup |
 
-Cleanup runs as a Deno cron job. Significant or manually-flagged snapshots can
-be excluded from automatic cleanup.
+Cleanup is performed whenever a new snapshot is created — the `snapshot_create`
+tool both writes the new snapshot and reaps any older than the retention window
+in the same call. Psycheros' daily-3am `identity.snapshot` schedule drives this
+on a recurring cadence; significant or manually-flagged snapshots can be
+excluded from automatic cleanup.
 
 ## Restoring
 

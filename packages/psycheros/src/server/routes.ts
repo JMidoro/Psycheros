@@ -160,6 +160,8 @@ export interface RouteContext {
   projectRoot: string;
   /** Pulse engine for autonomous entity prompts */
   pulseEngine?: import("../pulse/mod.ts").PulseEngine;
+  /** Durable scheduler — schedules and job_runs. */
+  scheduler?: import("@psycheros/scheduler").Scheduler;
   /** Optional chat RAG for searching conversation history */
   chatRAG?: ConversationRAG;
   /** RAG configuration */
@@ -1184,10 +1186,8 @@ export async function handleChat(
           })
           : null;
 
-        // Update pulse engine's last user message timestamp (for inactivity triggers)
-        if (ctx.pulseEngine) {
-          ctx.pulseEngine.updateLastUserMessage();
-        }
+        // Inactivity-trigger eligibility is derived from the messages table
+        // on every tick, so no in-memory cache to update here.
 
         // Create EntityTurn instance
         const activeProfile = ctx.getActiveLLMProfile();
@@ -1380,10 +1380,6 @@ export async function handleChatRetry(
   const stream = new ReadableStream<SSEEvent>({
     async start(controller) {
       try {
-        if (ctx.pulseEngine) {
-          ctx.pulseEngine.updateLastUserMessage();
-        }
-
         const retryProfile = ctx.getActiveLLMProfile();
         const turn = new EntityTurn(
           ctx.llm,
@@ -2993,13 +2989,10 @@ export async function handleMcpSync(ctx: RouteContext): Promise<Response> {
       );
     }
 
-    // Pull latest from entity-core
+    // Pull latest from entity-core. Pending local writes flow through
+    // the scheduler's `mcp.push-identity-change` queue automatically —
+    // I report how many are still in flight so the user can see them.
     const identity = await ctx.mcpClient.pull();
-
-    // Push any pending changes
-    const pushSuccess = await ctx.mcpClient.push();
-
-    // Get pending counts
     const pending = ctx.mcpClient.getPendingCount();
 
     const result: {
@@ -3010,14 +3003,12 @@ export async function handleMcpSync(ctx: RouteContext): Promise<Response> {
         user: number;
         relationship: number;
       };
-      pushed: boolean;
       pending: {
         identity: number;
       };
     } = {
       success: true,
       connected: true,
-      pushed: pushSuccess,
       pending,
     };
 
@@ -8282,8 +8273,8 @@ export async function handleEntityCoreSync(
   }
 
   try {
+    // Pull canonical identity; pending pushes ride the scheduler queue.
     await ctx.mcpClient.pull();
-    await ctx.mcpClient.push();
     return new Response(JSON.stringify({ success: true }), {
       headers: { "Content-Type": "application/json" },
     });

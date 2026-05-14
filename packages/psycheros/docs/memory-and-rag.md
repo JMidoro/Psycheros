@@ -29,8 +29,8 @@ What entity-core manages:
 - **Memory storage** — all memory files (daily, weekly, monthly, yearly,
   significant)
 - **Memory RAG** — vector indexing and semantic search over memories
-- **Consolidation** — weekly/monthly/yearly summarization via cron jobs with
-  catch-up
+- **Consolidation** — weekly/monthly/yearly summarization through the durable
+  scheduler with catch-up
 
 ## Memory Hierarchy
 
@@ -42,12 +42,14 @@ hierarchically and consolidated over time.
 
 Daily summarization runs in Psycheros (it has conversation context) but writes
 the result to entity-core via MCP. When `PSYCHEROS_DISPLAY_TZ` is configured,
-the cron fires at 5 AM in the user's local timezone and messages are grouped by
-logical local date (a 5 AM cutoff means messages from 5 AM today to 4:59 AM
+the schedule fires at 5 AM in the user's local timezone and messages are grouped
+by logical local date (a 5 AM cutoff means messages from 5 AM today to 4:59 AM
 tomorrow are the same "day"). Without a configured timezone, it falls back to
 `PSYCHEROS_MEMORY_HOUR` at UTC (default: 4 AM). Weekly, monthly, and yearly
-consolidation runs in entity-core via its own cron jobs, independently of
-whether any Psycheros instance is connected.
+consolidation runs in entity-core through its own scheduler, independently of
+whether any Psycheros instance is connected. All schedules have
+`fire_once_then_align` catch-up — if a daemon was down at the fire time, it runs
+once on next boot and resumes the normal cadence.
 
 ```
 entity-core/data/memories/        (canonical storage — managed by entity-core)
@@ -65,19 +67,19 @@ entity-core/data/memories/        (canonical storage — managed by entity-core)
 
 ### Memory Types
 
-| Type            | Description                                          | Created By                                  | Stored In   |
-| --------------- | ---------------------------------------------------- | ------------------------------------------- | ----------- |
-| **Daily**       | Auto-generated conversation summaries                | Psycheros via MCP                           | entity-core |
-| **Weekly**      | Consolidated from daily entries                      | entity-core cron (Sunday 5 AM)              | entity-core |
-| **Monthly**     | Consolidated from weekly entries                     | entity-core cron (1st of month 5 AM)        | entity-core |
-| **Yearly**      | Consolidated from monthly entries                    | entity-core cron (January 1st 5 AM)         | entity-core |
-| **Significant** | Emotionally important events, permanently remembered | Entity via `create_significant_memory` tool | entity-core |
+| Type            | Description                                          | Created By                                    | Stored In   |
+| --------------- | ---------------------------------------------------- | --------------------------------------------- | ----------- |
+| **Daily**       | Auto-generated conversation summaries                | Psycheros via MCP                             | entity-core |
+| **Weekly**      | Consolidated from daily entries                      | entity-core scheduler (Sunday 5 AM UTC)       | entity-core |
+| **Monthly**     | Consolidated from weekly entries                     | entity-core scheduler (1st of month 5 AM UTC) | entity-core |
+| **Yearly**      | Consolidated from monthly entries                    | entity-core scheduler (Jan 1st 5 AM UTC)      | entity-core |
+| **Significant** | Emotionally important events, permanently remembered | Entity via `create_significant_memory` tool   | entity-core |
 
 ### Trigger
 
-On startup and via daily cron, Psycheros checks for unsummarized dates (days
-with messages not yet recorded in `memory_summaries`). The cron fires at 5 AM in
-the user's local timezone (when `PSYCHEROS_DISPLAY_TZ` is set), or at
+On startup and via the daily schedule, Psycheros checks for unsummarized dates
+(days with messages not yet recorded in `memory_summaries`). The schedule fires
+at 5 AM in the user's local timezone (when `PSYCHEROS_DISPLAY_TZ` is set), or at
 `PSYCHEROS_MEMORY_HOUR` UTC (default: 4 AM) as a fallback. On startup,
 `repairOrphanedSummaries()` detects DB records where the corresponding memory
 doesn't exist in entity-core (e.g., from a failed MCP write), clears them, and
@@ -127,19 +129,20 @@ prevents high-volume channels from blowing out the daily memory context window.
 
 ### Consolidation Schedule
 
-- **Daily summarization**: Psycheros cron at 5 AM local time (or
+- **Daily summarization**: Psycheros scheduler at 5 AM local time (or
   `PSYCHEROS_MEMORY_HOUR` UTC fallback) — uses the active profile's worker
   model, stored in entity-core
-- **Weekly**: entity-core cron (Sunday 5 AM UTC) — runs in entity-core with
-  catch-up
-- **Monthly**: entity-core cron (1st of month 5 AM UTC) — runs in entity-core
-  with catch-up
-- **Yearly**: entity-core cron (January 1st 5 AM UTC) — runs in entity-core with
-  catch-up
+- **Weekly**: entity-core scheduler (Sunday 5 AM UTC) — `fire_once_then_align`
+  catch-up policy
+- **Monthly**: entity-core scheduler (1st of month 5 AM UTC) —
+  `fire_once_then_align` catch-up policy
+- **Yearly**: entity-core scheduler (January 1st 5 AM UTC) —
+  `fire_once_then_align` catch-up policy
 
 Weekly, monthly, and yearly consolidation run independently in entity-core
-regardless of whether Psycheros is connected. Entity-core's cron jobs include
-catch-up logic that finds and processes any missed periods.
+regardless of whether Psycheros is connected. Each handler internally finds and
+processes any missed periods, so a single catch-up fire after extended downtime
+is enough to bring the hierarchy current.
 
 ### Instance Tagging
 

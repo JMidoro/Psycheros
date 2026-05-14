@@ -8,6 +8,7 @@
 import { Database } from "@db/sqlite";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { ensureDir } from "@std/fs";
+import { initSchedulerTables } from "@psycheros/scheduler";
 import {
   ensureVectorExtension,
   getPlatformExtension,
@@ -87,7 +88,20 @@ export class GraphStore {
       verifyVectorTableSync(this.db);
     }
 
+    // Scheduler tables live alongside the graph — entity-core runs its
+    // consolidation cadence through the same Scheduler primitive that
+    // Psycheros uses, just over its own data.
+    initSchedulerTables(this.db);
+
     this.initialized = true;
+  }
+
+  /**
+   * Get the raw database connection so callers (like the scheduler) can
+   * operate on the same `graph.db` file without re-opening it.
+   */
+  getRawDb(): Database {
+    return this.db;
   }
 
   /**

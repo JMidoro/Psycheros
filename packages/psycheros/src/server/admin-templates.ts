@@ -9,8 +9,74 @@
 
 import type { LogEntry } from "./logger.ts";
 import type { DiagnosticsSnapshot } from "./diagnostics.ts";
-import type { ScheduledJob } from "./cron-tracker.ts";
+import type { Scheduler } from "@psycheros/scheduler";
 import { escapeHtml } from "./templates.ts";
+
+/**
+ * UI-facing view-model for the admin scheduled-jobs table. Materialized
+ * from the scheduler's `schedules` + per-handler stats so the existing
+ * HTMX surface stays unchanged.
+ */
+export interface AdminScheduledJob {
+  id: string;
+  name: string;
+  schedule: string;
+  description: string;
+  status: "idle" | "running" | "success" | "error" | "dead" | "skipped";
+  lastRunAt: string | null;
+  lastCompletedAt: string | null;
+  lastDurationMs: number | null;
+  lastResult: string | null;
+  lastError: string | null;
+  successCount: number;
+  errorCount: number;
+  manualTrigger: boolean;
+}
+
+/**
+ * Build the admin-jobs view model from the scheduler. Each schedule maps
+ * to one row; per-handler run stats come from `job_runs`. Pulse schedules
+ * (id starting with `pulse-`) are excluded — those have their own UI in
+ * the Pulse settings tab.
+ */
+export function buildAdminJobsViewModel(
+  scheduler: Scheduler,
+): AdminScheduledJob[] {
+  const schedules = scheduler.listSchedules()
+    .filter((s) => !s.id.startsWith("pulse-"));
+  return schedules.map((schedule) => {
+    const stats = scheduler.getHandlerStats(schedule.handler);
+    const meta = schedule.metadata as Record<string, unknown>;
+    const name = typeof meta.name === "string" ? meta.name : schedule.id;
+    const description = typeof meta.description === "string"
+      ? meta.description
+      : "";
+    const manualTrigger = meta.manualTrigger === true;
+    const cadence = schedule.cronExpr ??
+      (schedule.intervalSeconds ? `every ${schedule.intervalSeconds}s` : "");
+
+    let status: AdminScheduledJob["status"] = "idle";
+    if (stats.lastStatus && stats.lastStatus !== "pending") {
+      status = stats.lastStatus;
+    }
+
+    return {
+      id: schedule.id,
+      name,
+      schedule: cadence,
+      description,
+      status,
+      lastRunAt: stats.lastRunAt,
+      lastCompletedAt: stats.lastCompletedAt,
+      lastDurationMs: stats.lastDurationMs,
+      lastResult: stats.lastResult,
+      lastError: stats.lastError,
+      successCount: stats.successCount,
+      errorCount: stats.errorCount,
+      manualTrigger,
+    };
+  });
+}
 
 /**
  * Render the admin hub — top-level view with sub-navigation cards.
@@ -433,7 +499,7 @@ export function renderAdminLogs(
 /**
  * Render the scheduled jobs dashboard.
  */
-export function renderAdminJobs(jobs: ScheduledJob[]): string {
+export function renderAdminJobs(jobs: AdminScheduledJob[]): string {
   if (jobs.length === 0) {
     return `<div class="admin-jobs">
       <div class="admin-empty">No scheduled jobs registered. Memory system may be disabled.</div>
@@ -483,15 +549,17 @@ export function renderAdminJobs(jobs: ScheduledJob[]): string {
 /**
  * Render just the scheduled jobs table rows (for HTMX partial swap).
  */
-export function renderAdminJobRows(jobs: ScheduledJob[]): string {
+export function renderAdminJobRows(jobs: AdminScheduledJob[]): string {
   if (jobs.length === 0) {
     return `<tr><td colspan="8" class="admin-empty">No scheduled jobs registered.</td></tr>`;
   }
 
   return jobs.map((job) => {
+    // `dead` shares the error styling — both are terminal failure states
+    // from the user's point of view. `skipped` is a neutral outcome.
     const statusClass = job.status === "success"
       ? "admin-status-ok"
-      : job.status === "error"
+      : job.status === "error" || job.status === "dead"
       ? "admin-status-error"
       : job.status === "running"
       ? "admin-status-running"
@@ -501,8 +569,12 @@ export function renderAdminJobRows(jobs: ScheduledJob[]): string {
       ? "OK"
       : job.status === "error"
       ? "Error"
+      : job.status === "dead"
+      ? "Failed"
       : job.status === "running"
       ? "Running"
+      : job.status === "skipped"
+      ? "Skipped"
       : "Idle";
 
     const lastRun = job.lastCompletedAt

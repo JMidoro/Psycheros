@@ -1,12 +1,33 @@
 /**
  * Pulse Engine
  *
- * Core execution engine for the Pulse system. Manages scheduling,
- * triggering, and executing pulses via the entity's agentic loop.
+ * The Pulse subsystem lets me execute prompts autonomously — on a
+ * schedule, in response to user inactivity, on a filesystem event, or
+ * from an external webhook.
+ *
+ * I am a consumer of the durable scheduler. Cron and inactivity pulses
+ * become schedules in the scheduler's `schedules` table; webhook and
+ * filesystem pulses enqueue jobs directly on event. Manual triggers and
+ * chained executions enqueue jobs the same way. Every actual execution
+ * runs inside the `pulse.execute` handler I register here.
+ *
+ * The benefits of routing everything through the scheduler:
+ *   - Missed cron fires are evaluated on each boot per the schedule's
+ *     catchup policy (most pulses skip missed fires; one-shots fire once).
+ *   - In-flight runs at crash become `dead` rows with a clear reason on
+ *     the next boot, instead of zombie `running` rows that never resolve.
+ *   - Run history is the same `job_runs` table the admin UI reads, so
+ *     "OK/Err" counts and "last fired at" are derived from one source.
  *
  * @module
  */
 
+import type { Scheduler } from "@psycheros/scheduler";
+import type {
+  HandlerContext,
+  HandlerResult,
+  JobRunRow,
+} from "@psycheros/scheduler";
 import type { DBClient } from "../db/mod.ts";
 import type { LLMClient } from "../llm/mod.ts";
 import type { WebSearchSettings } from "../llm/web-search-settings.ts";
@@ -30,14 +51,26 @@ import type { Message, PulseRow } from "../types.ts";
 // Constants
 // =============================================================================
 
-/** Maximum concurrent pulse executions (prevents LLM API overload) */
+/** Maximum concurrent pulse executions — bounds LLM API load. */
 const MAX_CONCURRENT_PULSES = 3;
 
-/** Default debounce interval for filesystem triggers (ms) */
+/** Filesystem-event debounce window per pulse, in milliseconds. */
 const FS_DEBOUNCE_MS = 1_000;
 
-/** Default rate limit for webhook triggers (ms per pulse) */
+/** Webhook-trigger rate limit window per pulse, in milliseconds. */
 const WEBHOOK_RATE_LIMIT_MS = 10_000;
+
+/** Inactivity pulses tick this often — the handler decides whether to fire. */
+const INACTIVITY_TICK_CRON = "* * * * *";
+
+/** Pulse trigger sources, recorded in the job_runs payload. */
+export type PulseTriggerSource =
+  | "cron"
+  | "webhook"
+  | "filesystem"
+  | "chain"
+  | "manual"
+  | "inactivity";
 
 // =============================================================================
 // Semaphore
@@ -68,7 +101,7 @@ class Semaphore {
 }
 
 // =============================================================================
-// Pulse Engine
+// Engine Configuration
 // =============================================================================
 
 /**
@@ -80,33 +113,30 @@ export interface PulseEngineConfig {
   mcpClient?: MCPClient;
   lorebookManager?: LorebookManager;
   vaultManager?: VaultManager;
-  /** Getter for web search settings (read fresh each pulse execution) */
   webSearchSettings?: () => WebSearchSettings | undefined;
-  /** Getter for Discord settings (read fresh each pulse execution) */
   discordSettings?: () => DiscordSettings | undefined;
-  /** Getter for Home settings (read fresh each pulse execution) */
   homeSettings?: () => HomeSettings | undefined;
-  /** Getter for image generation settings (read fresh each pulse execution) */
   imageGenSettings?: () => ImageGenSettings | undefined;
-  /** Getter for Lovense settings (read fresh each pulse execution) */
   lovenseSettings?: () => LovenseSettings | undefined;
-  /** Getter for Buttplug settings (read fresh each pulse execution) */
   buttplugSettings?: () => ButtplugSettings | undefined;
-  /** Getter for device status cache (for SA connected devices signal) */
   deviceStatusCache?: () =>
     | import("../server/device-cache.ts").DeviceStatusCache
     | undefined;
-  /** Getter for context window size from active LLM profile */
   contextLength?: () => number | undefined;
-  /** Getter for max response tokens from active LLM profile */
   maxTokens?: () => number | undefined;
 }
+
+// =============================================================================
+// Pulse Engine
+// =============================================================================
 
 /**
  * Core engine for the Pulse system.
  *
- * Manages scheduling (cron, inactivity), external triggers (webhook, filesystem),
- * and execution of pulses via the entity's agentic loop.
+ * Holds transient in-memory state (currently-running pulses, fs-watcher
+ * handles, webhook rate-limit timestamps). All durable state — schedule
+ * definitions, run history, retry attempts — lives in the scheduler's
+ * SQLite tables.
  */
 export class PulseEngine {
   private runningPulses: Set<string> = new Set();
@@ -115,12 +145,11 @@ export class PulseEngine {
   private fsWatchers: Map<string, Deno.FsWatcher> = new Map();
   private fsDebounce: Map<string, number> = new Map();
   private webhookRateLimit: Map<string, number> = new Map();
-  private lastGlobalUserMessage: string | null = null;
-  private inactivityEnabledAt: Map<string, number> = new Map();
   private started = false;
 
   constructor(
     private db: DBClient,
+    private scheduler: Scheduler,
     private getLlm: () => LLMClient,
     private tools: () => ToolRegistry,
     private config: PulseEngineConfig,
@@ -133,19 +162,20 @@ export class PulseEngine {
   // ===========================================================================
 
   /**
-   * Start the pulse engine. Loads enabled pulses and registers schedulers.
-   * Should be called once after server initialization.
+   * Start the pulse engine. Registers the `pulse.execute` handler with the
+   * scheduler and defines schedules for every enabled pulse.
+   * Idempotent — calling twice is a no-op.
    */
   start(): void {
     if (this.started) return;
     this.started = true;
 
-    // Hydrate the last global user message timestamp
-    this.lastGlobalUserMessage = this.db.getLastUserMessageTimestamp();
+    this.scheduler.register(
+      "pulse.execute",
+      (ctx) => this.handlePulseExecute(ctx),
+    );
 
-    // Load all enabled pulses and register their triggers
     const pulses = this.db.listPulses({ enabled: true });
-
     for (const pulse of pulses) {
       this.registerTriggers(pulse);
     }
@@ -154,8 +184,8 @@ export class PulseEngine {
   }
 
   /**
-   * Stop the pulse engine. Closes filesystem watchers.
-   * Should be called during graceful shutdown.
+   * Stop the pulse engine. Closes filesystem watchers; the scheduler
+   * itself is owned and stopped by the server.
    */
   stop(): void {
     this.started = false;
@@ -178,27 +208,26 @@ export class PulseEngine {
   // ===========================================================================
 
   /**
-   * Register all trigger types for a pulse.
-   * Called on startup for each enabled pulse, and when a pulse is created/updated.
+   * Register a pulse's trigger surface — schedules go to the scheduler,
+   * filesystem watchers open here. Called on startup for each enabled
+   * pulse, and whenever a pulse is created or updated.
    */
   registerTriggers(pulse: PulseRow): void {
-    if (pulse.triggerType === "cron") {
-      this.registerCronTrigger(pulse);
-    } else if (pulse.triggerType === "inactivity") {
-      // Track when this pulse was enabled so the inactivity timer
-      // starts from now, not retroactively from an old user message.
-      this.inactivityEnabledAt.set(pulse.id, Date.now());
-      this.registerInactivityTrigger(pulse);
+    if (pulse.triggerType === "cron" || pulse.triggerType === "inactivity") {
+      this.defineSchedule(pulse);
     } else if (pulse.triggerType === "filesystem") {
-      this.registerFilesystemTrigger(pulse);
+      this.openFilesystemWatcher(pulse);
     }
-    // Webhook pulses don't need registration — they handle POST requests on-demand
+    // Webhook pulses have no persistent registration — incoming HTTP
+    // requests enqueue jobs directly.
   }
 
   /**
-   * Remove triggers for a pulse (e.g., when disabled or deleted).
+   * Remove a pulse's trigger surface. Schedules are deleted from the
+   * scheduler so they stop firing; filesystem watchers are closed.
    */
   removeTriggers(pulse: PulseRow): void {
+    this.scheduler.removeSchedule(this.scheduleIdFor(pulse.id));
     if (pulse.triggerType === "filesystem") {
       const watcher = this.fsWatchers.get(pulse.id);
       if (watcher) {
@@ -209,245 +238,88 @@ export class PulseEngine {
         this.fsDebounce.delete(pulse.id);
       }
     }
-    // Cron and inactivity triggers check `enabled` at execution time,
-    // so no explicit removal needed — they'll be skipped.
   }
 
-  // ===========================================================================
-  // Abort Control
-  // ===========================================================================
-
-  /**
-   * Request abort of a running Pulse by pulse ID.
-   * The Pulse will stop on its next content chunk check.
-   */
-  abortPulse(pulseId: string): boolean {
-    if (this.runningPulses.has(pulseId)) {
-      this.abortedPulses.add(pulseId);
-      return true;
-    }
-    return false;
+  private scheduleIdFor(pulseId: string): string {
+    return `pulse-${pulseId}`;
   }
 
-  /**
-   * Get the pulse ID currently running for a conversation, if any.
-   */
-  getRunningPulseForConversation(conversationId: string): string | null {
-    // Check if any running pulse has this conversation assigned
-    // We need to query the DB for this since we don't track conversationId in runningPulses
-    const pulses = this.db.listPulses({ enabled: true });
-    for (const pulse of pulses) {
-      if (
-        this.runningPulses.has(pulse.id) &&
-        pulse.conversationId === conversationId
-      ) {
-        return pulse.id;
-      }
-    }
-    return null;
-  }
+  private defineSchedule(pulse: PulseRow): void {
+    const id = this.scheduleIdFor(pulse.id);
+    const handler = "pulse.execute";
+    const payload = { pulseId: pulse.id, triggerSource: pulse.triggerType };
 
-  // ===========================================================================
-  // Cron Trigger
-  // ===========================================================================
-
-  private registerCronTrigger(pulse: PulseRow): void {
-    // Determine the effective cron schedule
-    let schedule: string;
-
-    if (pulse.intervalSeconds && pulse.intervalSeconds >= 60) {
-      const minutes = Math.floor(pulse.intervalSeconds / 60);
-      schedule = `*/${minutes} * * * *`;
-    } else if (pulse.randomIntervalMin && pulse.randomIntervalMax) {
-      // Check every minute, use probability to determine if we should fire
-      schedule = "* * * * *";
-    } else if (pulse.runAt) {
-      // One-shot: check every minute until the time is reached
-      schedule = "* * * * *";
-    } else {
-      schedule = pulse.cronExpression ?? "0 * * * *";
-    }
-
-    // Deno.cron doesn't support dynamic cancellation, so we use a generic
-    // handler that checks pulse state at execution time.
-    // We use the pulse ID as the cron name for identification.
-    const cronName = `pulse-cron-${pulse.id}`;
-
-    try {
-      Deno.cron(cronName, schedule, async () => {
-        await this.handleCronTick(pulse.id);
+    if (pulse.runAt) {
+      // One-shot at a specific time. Use the scheduler's oneshot kind so
+      // the schedule disables itself after firing.
+      this.scheduler.defineSchedule({
+        id,
+        kind: "oneshot",
+        handler,
+        payload,
+        runAt: pulse.runAt,
+        catchupPolicy: "fire_once_then_align",
+        maxAttempts: 1,
       });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes("already exists")) {
-        // Deno.cron can't be cancelled. The existing handler still reads
-        // pulse state from DB each tick, so it will pick up any changes.
-        console.log(
-          `[Pulse] Cron "${cronName}" already registered for "${pulse.name}" — existing handler will use updated config`,
-        );
-      } else {
-        console.error(
-          `[Pulse] Failed to register cron for "${pulse.name}":`,
-          msg,
-        );
-      }
-    }
-  }
-
-  /**
-   * Called on each cron tick. Checks timing guards and fires if appropriate.
-   */
-  private async handleCronTick(pulseId: string): Promise<void> {
-    const pulse = this.db.getPulse(pulseId);
-    if (!pulse || !pulse.enabled) return;
-
-    // Interval guard for sub-minute intervals
-    if (
-      pulse.intervalSeconds && pulse.intervalSeconds < 60 && pulse.lastRunAt
-    ) {
-      const elapsed = Date.now() - new Date(pulse.lastRunAt).getTime();
-      if (elapsed < pulse.intervalSeconds * 1000) return;
-    }
-
-    // Random interval guard
-    if (pulse.randomIntervalMin && pulse.randomIntervalMax && pulse.lastRunAt) {
-      const avgInterval = (pulse.randomIntervalMin + pulse.randomIntervalMax) /
-        2 * 1000;
-      const probability = 60_000 / avgInterval;
-      if (Math.random() > probability) return;
-    }
-
-    // One-shot run_at check
-    const isOneshot = !!pulse.runAt;
-    if (isOneshot) {
-      if (Date.now() < new Date(pulse.runAt!).getTime()) return;
-      // Clear runAt to prevent re-firing on the next cron tick.
-      // Do NOT disable here — executePulse re-reads from DB and checks enabled.
-      this.db.updatePulse(pulse.id, { runAt: null });
-    }
-
-    await this.executePulse(pulseId, "cron", 0, null);
-
-    // Disable one-shot pulses after execution (auto-delete already handled inside executePulse)
-    if (isOneshot) {
-      const stillExists = this.db.getPulse(pulseId);
-      if (stillExists && stillExists.enabled) {
-        this.db.updatePulse(pulseId, { enabled: false });
-      }
-    }
-  }
-
-  // ===========================================================================
-  // Inactivity Trigger
-  // ===========================================================================
-
-  /**
-   * Register an inactivity monitor that checks every minute.
-   */
-  private registerInactivityTrigger(pulse: PulseRow): void {
-    if (!pulse.inactivityThresholdSeconds) return;
-
-    const cronName = `pulse-inactivity-${pulse.id}`;
-    try {
-      Deno.cron(cronName, "* * * * *", async () => {
-        await this.handleInactivityTick(pulse.id);
-      });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes("already exists")) {
-        // Deno.cron can't be cancelled. The existing handler still reads
-        // pulse state from DB each tick, so it will pick up any changes.
-        console.log(
-          `[Pulse] Inactivity cron "${cronName}" already registered for "${pulse.name}" — existing handler will use updated config`,
-        );
-      } else {
-        console.error(
-          `[Pulse] Failed to register inactivity trigger for "${pulse.name}":`,
-          msg,
-        );
-      }
-    }
-  }
-
-  private async handleInactivityTick(pulseId: string): Promise<void> {
-    const pulse = this.db.getPulse(pulseId);
-    if (!pulse || !pulse.enabled || !pulse.inactivityThresholdSeconds) return;
-
-    // Don't fire if already running
-    if (this.runningPulses.has(pulseId)) return;
-
-    // Use cached timestamp (updated when user messages arrive)
-    if (!this.lastGlobalUserMessage) {
       return;
     }
 
-    // The inactivity clock starts from whichever is more recent:
-    // - when the pulse was enabled/saved (prevents retroactive firing)
-    // - when the user last sent a message (resets on activity)
-    const lastMessageMs = new Date(this.lastGlobalUserMessage).getTime();
-    const enabledAtMs = this.inactivityEnabledAt.get(pulseId) ?? lastMessageMs;
-    const effectiveStartMs = Math.max(enabledAtMs, lastMessageMs);
-
-    const elapsedMs = Date.now() - effectiveStartMs;
-    const thresholdMs = pulse.inactivityThresholdSeconds * 1000;
-
-    // Hard threshold: must be inactive for at least the set duration
-    if (elapsedMs < thresholdMs) return;
-
-    // Cooldown: don't fire again until the full threshold has elapsed since
-    // the last successful run (or since user activity, whichever is later).
-    // This prevents rapid-fire when the user stays inactive.
-    if (pulse.lastRunAt) {
-      const sinceLastRunMs = Date.now() - new Date(pulse.lastRunAt).getTime();
-      if (sinceLastRunMs < thresholdMs) {
-        return;
-      }
+    if (pulse.triggerType === "inactivity") {
+      // Inactivity pulses tick every minute; the handler checks the user's
+      // last activity timestamp and the cooldown before firing for real.
+      this.scheduler.defineSchedule({
+        id,
+        kind: "recurring",
+        handler,
+        payload,
+        cronExpr: INACTIVITY_TICK_CRON,
+        catchupPolicy: "skip_missed",
+        maxAttempts: 1,
+      });
+      return;
     }
 
-    // If random jitter is enabled (randomIntervalMin/Max set), add organic delay.
-    // randomIntervalMin/Max represent the absolute elapsed time range from
-    // the effective start during which the pulse may fire.
+    if (pulse.intervalSeconds && pulse.intervalSeconds > 0) {
+      this.scheduler.defineSchedule({
+        id,
+        kind: "recurring",
+        handler,
+        payload,
+        intervalSeconds: pulse.intervalSeconds,
+        catchupPolicy: "skip_missed",
+        maxAttempts: 1,
+      });
+      return;
+    }
+
     if (pulse.randomIntervalMin && pulse.randomIntervalMax) {
-      const windowStartMs = pulse.randomIntervalMin * 1000;
-      const windowEndMs = pulse.randomIntervalMax * 1000;
-
-      if (elapsedMs < windowStartMs) return; // Too early even with jitter
-
-      if (elapsedMs <= windowEndMs) {
-        // Within the jitter window — use probability for organic feel.
-        // Linear ramp from 0 to 40% across the window.
-        const windowProgress = (elapsedMs - windowStartMs) /
-          (windowEndMs - windowStartMs);
-        const probability = Math.min(0.4, windowProgress * 0.6);
-        if (Math.random() > probability) return;
-      }
-      // Past the window — fall through and fire.
-      // The threshold is exceeded and the jitter window was just for timing,
-      // not permanent suppression.
+      this.scheduler.defineSchedule({
+        id,
+        kind: "recurring",
+        handler,
+        payload,
+        randomMinSeconds: pulse.randomIntervalMin,
+        randomMaxSeconds: pulse.randomIntervalMax,
+        catchupPolicy: "skip_missed",
+        maxAttempts: 1,
+      });
+      return;
     }
 
-    await this.executePulse(pulseId, "inactivity", 0, null);
+    this.scheduler.defineSchedule({
+      id,
+      kind: "recurring",
+      handler,
+      payload,
+      cronExpr: pulse.cronExpression ?? "0 * * * *",
+      catchupPolicy: "skip_missed",
+      maxAttempts: 1,
+    });
   }
 
-  /**
-   * Update the last global user message timestamp.
-   * Called by the chat handler when a user message is received.
-   * Uses Date.now() directly since we know a message just arrived,
-   * rather than querying the DB (which may not have the message yet
-   * since EntityTurn.process() hasn't run).
-   */
-  updateLastUserMessage(): void {
-    this.lastGlobalUserMessage = new Date().toISOString();
-  }
-
-  // ===========================================================================
-  // Filesystem Trigger
-  // ===========================================================================
-
-  private registerFilesystemTrigger(pulse: PulseRow): void {
+  private openFilesystemWatcher(pulse: PulseRow): void {
     if (!pulse.filesystemWatchPath) return;
 
-    // Close existing watcher if any
     const existing = this.fsWatchers.get(pulse.id);
     if (existing) {
       try {
@@ -459,12 +331,11 @@ export class PulseEngine {
       const watcher = Deno.watchFs(pulse.filesystemWatchPath);
       this.fsWatchers.set(pulse.id, watcher);
 
-      // Run the watcher loop (non-blocking)
       (async () => {
         try {
           for await (const event of watcher) {
             if (event.kind === "create" || event.kind === "modify") {
-              await this.handleFsEvent(pulse.id);
+              this.onFilesystemEvent(pulse.id);
             }
           }
         } catch (error) {
@@ -488,176 +359,357 @@ export class PulseEngine {
     }
   }
 
-  private async handleFsEvent(pulseId: string): Promise<void> {
+  private onFilesystemEvent(pulseId: string): void {
     const now = Date.now();
     const lastTrigger = this.fsDebounce.get(pulseId) ?? 0;
-
-    // Debounce: ignore events within the cooldown period
     if (now - lastTrigger < FS_DEBOUNCE_MS) return;
-
     this.fsDebounce.set(pulseId, now);
+
     const pulse = this.db.getPulse(pulseId);
     if (!pulse || !pulse.enabled) return;
 
-    await this.executePulse(pulseId, "filesystem", 0, null);
+    this.enqueueExecution(pulseId, "filesystem", 0, null);
   }
 
   // ===========================================================================
-  // Webhook Trigger
+  // External Triggers — enqueue jobs through the scheduler
   // ===========================================================================
 
   /**
-   * Handle a webhook trigger. Returns an error message if the trigger should be rejected.
+   * Manually trigger a pulse. Used by the HTTP route, the pulse tool
+   * (from entity-generated pulses), and chained executions.
+   *
+   * Returns the queued job_run row. The actual execution happens
+   * asynchronously when the scheduler ticks (within ~5 seconds).
    */
-  checkWebhookTrigger(
+  triggerPulse(
     pulseId: string,
-  ): { ok: true } | { ok: false; error: string } {
+    triggerSource: PulseTriggerSource,
+    chainDepth = 0,
+    parentRunId: string | null = null,
+  ): JobRunRow {
+    return this.enqueueExecution(
+      pulseId,
+      triggerSource,
+      chainDepth,
+      parentRunId,
+    );
+  }
+
+  /**
+   * Webhook trigger. Rate-limited per pulse (in-memory). On success,
+   * enqueues a job and returns its id.
+   */
+  triggerWebhook(
+    pulseId: string,
+  ): { ok: true; jobId: string } | { ok: false; error: string } {
     const now = Date.now();
     const lastTrigger = this.webhookRateLimit.get(pulseId) ?? 0;
-
     if (now - lastTrigger < WEBHOOK_RATE_LIMIT_MS) {
       return { ok: false, error: "Rate limited" };
     }
-
     this.webhookRateLimit.set(pulseId, now);
-    return { ok: true };
+    const job = this.enqueueExecution(pulseId, "webhook", 0, null);
+    return { ok: true, jobId: job.id };
+  }
+
+  private enqueueExecution(
+    pulseId: string,
+    triggerSource: PulseTriggerSource,
+    chainDepth: number,
+    parentRunId: string | null,
+  ): JobRunRow {
+    const job = this.scheduler.enqueue({
+      handler: "pulse.execute",
+      payload: { pulseId, triggerSource, chainDepth, parentRunId },
+      maxAttempts: 1,
+    });
+    // Manual / webhook / filesystem triggers are user-driven; the user
+    // shouldn't wait up to the tick interval for execution to start.
+    this.scheduler.nudge();
+    return job;
   }
 
   // ===========================================================================
-  // Execution
+  // Abort Control
   // ===========================================================================
 
   /**
-   * Execute a pulse.
-   *
-   * @param pulseId - The pulse to execute
-   * @param triggerSource - What triggered this execution
-   * @param chainDepth - Current depth in the chain (0 for root execution)
-   * @param parentRunId - The run ID of the parent in a chain (null for root)
+   * Request abort of a running Pulse. The Pulse loop checks this flag on
+   * every content chunk and exits cleanly.
    */
-  async executePulse(
-    pulseId: string,
-    triggerSource:
-      | "cron"
-      | "webhook"
-      | "filesystem"
-      | "chain"
-      | "manual"
-      | "inactivity",
-    chainDepth: number,
-    parentRunId: string | null,
-  ): Promise<void> {
-    const pulse = this.db.getPulse(pulseId);
-    if (!pulse || !pulse.enabled) return;
-
-    // Guard: already running
+  abortPulse(pulseId: string): boolean {
     if (this.runningPulses.has(pulseId)) {
-      console.debug(`[Pulse] Skipping "${pulse.name}" — already running`);
-      return;
+      this.abortedPulses.add(pulseId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Get the pulse currently running in a given conversation, if any.
+   */
+  getRunningPulseForConversation(conversationId: string): string | null {
+    const pulses = this.db.listPulses({ enabled: true });
+    for (const pulse of pulses) {
+      if (
+        this.runningPulses.has(pulse.id) &&
+        pulse.conversationId === conversationId
+      ) {
+        return pulse.id;
+      }
+    }
+    return null;
+  }
+
+  // ===========================================================================
+  // Handler
+  // ===========================================================================
+
+  /**
+   * The `pulse.execute` handler. Reads the pulse, checks eligibility,
+   * acquires the LLM-concurrency semaphore, and runs the agentic loop.
+   *
+   * Returns:
+   *   - `success` when the loop completes (even with an empty result),
+   *   - `skipped` when a guard rejects the run (pulse disabled, already
+   *     running, inactivity threshold not met, chain depth exceeded,
+   *     cycle detected) — no LLM call, no chat side effects.
+   *
+   * Throws on real execution errors so the scheduler marks the run
+   * `error` / `dead` and records the message.
+   */
+  private async handlePulseExecute(
+    ctx: HandlerContext,
+  ): Promise<HandlerResult> {
+    const payload = ctx.payload as {
+      pulseId?: string;
+      triggerSource?: PulseTriggerSource;
+      chainDepth?: number;
+      parentRunId?: string | null;
+    };
+
+    const pulseId = payload.pulseId;
+    if (!pulseId) {
+      return { status: "skipped", result: "Missing pulseId in payload" };
+    }
+    const triggerSource: PulseTriggerSource = payload.triggerSource ?? "cron";
+    const chainDepth = payload.chainDepth ?? 0;
+    const parentRunId = payload.parentRunId ?? null;
+
+    const pulse = this.db.getPulse(pulseId);
+    if (!pulse) {
+      return { status: "skipped", result: "Pulse no longer exists" };
+    }
+    if (!pulse.enabled) {
+      return { status: "skipped", result: "Pulse disabled" };
     }
 
-    // Guard: chain depth
+    if (pulse.triggerType === "inactivity" && triggerSource === "inactivity") {
+      const eligibility = this.checkInactivityEligibility(pulse);
+      if (!eligibility.ok) {
+        return { status: "skipped", result: eligibility.reason };
+      }
+    }
+
+    if (this.runningPulses.has(pulseId)) {
+      return { status: "skipped", result: "Already running" };
+    }
+
     if (chainDepth > pulse.maxChainDepth) {
-      console.debug(
-        `[Pulse] Skipping "${pulse.name}" — chain depth ${chainDepth} exceeds max ${pulse.maxChainDepth}`,
-      );
-      return;
+      return {
+        status: "skipped",
+        result: `Chain depth ${chainDepth} exceeds max ${pulse.maxChainDepth}`,
+      };
     }
 
-    // Guard: cycle detection
     if (parentRunId && this.db.detectPulseChainCycle(pulseId, parentRunId)) {
-      console.debug(
-        `[Pulse] Skipping "${pulse.name}" — cycle detected in chain`,
-      );
-      return;
+      return { status: "skipped", result: "Cycle detected in chain" };
     }
 
-    // Acquire semaphore (wait if at capacity)
+    const isOneshot = !!pulse.runAt;
+
     await this.semaphore.acquire();
     this.runningPulses.add(pulseId);
 
-    let errorMessage: string | null = null;
-    let conversationId: string | null = pulse.conversationId;
-    let runId: string | undefined;
     try {
-      // For visible mode with no assigned conversation, create a dedicated one
-      if (!conversationId && pulse.chatMode === "visible") {
-        const conv = this.db.createConversation(`[Pulse] ${pulse.name}`);
-        conversationId = conv.id;
-        // Store back on the pulse for reuse
-        this.db.updatePulse(pulseId, { conversationId });
-      }
-
-      // For silent mode with no conversation, create a temporary one
-      if (!conversationId && pulse.chatMode === "silent") {
-        const conv = this.db.createConversation(`[Pulse:silent] ${pulse.name}`);
-        conversationId = conv.id;
-      }
-
-      // Create run record
-      runId = this.db.addPulseRun({
-        pulseId,
-        conversationId,
+      const result = await this.runAgenticLoop(
+        pulse,
         triggerSource,
         chainDepth,
-        chainParentRunId: parentRunId,
-      });
-
-      console.log(
-        `[Pulse] Executing "${pulse.name}" (trigger: ${triggerSource}, chain: ${chainDepth})`,
+        ctx.jobId,
       );
 
-      // Build entity config
-      const entityConfig: EntityConfig = {
-        projectRoot: this.config.projectRoot,
-        chatRAG: this.config.chatRAG,
-        mcpClient: this.config.mcpClient,
-        lorebookManager: this.config.lorebookManager,
-        vaultManager: this.config.vaultManager,
-        webSearchSettings: this.config.webSearchSettings?.(),
-        discordSettings: this.config.discordSettings?.(),
-        homeSettings: this.config.homeSettings?.(),
-        imageGenSettings: this.config.imageGenSettings?.(),
-        lovenseSettings: this.config.lovenseSettings?.(),
-        buttplugSettings: this.config.buttplugSettings?.(),
-        deviceStatusCache: this.config.deviceStatusCache?.(),
-        contextLength: this.config.contextLength?.(),
-        maxTokens: this.config.maxTokens?.(),
-      };
-
-      const turn = new EntityTurn(
-        this.getLlm(),
-        this.db,
-        this.tools,
-        entityConfig,
-      );
-
-      // Broadcast the Pulse prompt message to the chat in real time
-      if (pulse.chatMode === "visible" && conversationId) {
-        try {
-          const pulseMsg: Message = {
-            id: crypto.randomUUID(),
-            role: "user",
-            content: pulse.promptText,
-            createdAt: new Date(),
-            pulseId: pulse.id,
-            pulseName: pulse.name,
-          };
-          const msgHtml = renderMessage(pulseMsg);
-          getBroadcaster().broadcastUpdate({
-            target: "#messages",
-            html: msgHtml,
-            swap: "beforeend",
-          }, conversationId);
-        } catch {
-          // Broadcaster may have no connected clients
+      // Fire chained pulses — each becomes its own scheduler job so they
+      // survive a crash mid-chain. Chain order is preserved by the
+      // scheduler's FIFO claim within a tick.
+      if (pulse.chainPulseIds.length > 0) {
+        for (const nextPulseId of pulse.chainPulseIds) {
+          this.enqueueExecution(
+            nextPulseId,
+            "chain",
+            chainDepth + 1,
+            ctx.jobId,
+          );
         }
       }
 
-      // Execute the agentic loop
-      let fullContent = "";
-      let toolCallsCount = 0;
+      // Entity-created one-shots auto-delete after they fire.
+      if (pulse.autoDelete) {
+        this.deletePulseAndRuns(pulseId);
+        console.log(
+          `[Pulse] Auto-deleted "${pulse.name}" after successful execution`,
+        );
+      } else if (isOneshot) {
+        // Clear runAt and disable so the pulse can't fire again. The
+        // scheduler's oneshot already disabled the schedule.
+        this.db.updatePulse(pulseId, { runAt: null, enabled: false });
+      }
 
+      return result;
+    } finally {
+      this.runningPulses.delete(pulseId);
+      this.abortedPulses.delete(pulseId);
+      this.semaphore.release();
+    }
+  }
+
+  /**
+   * Inactivity-pulse eligibility check. Reads the user's last message
+   * timestamp from the DB (no in-memory cache — survives restart) and
+   * decides whether this tick should fire.
+   */
+  private checkInactivityEligibility(
+    pulse: PulseRow,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!pulse.inactivityThresholdSeconds) {
+      return { ok: false, reason: "No inactivity threshold configured" };
+    }
+
+    const lastUserMessage = this.db.getLastUserMessageTimestamp();
+    if (!lastUserMessage) {
+      return { ok: false, reason: "No user message yet" };
+    }
+
+    const elapsedMs = Date.now() - new Date(lastUserMessage).getTime();
+    const thresholdMs = pulse.inactivityThresholdSeconds * 1000;
+    if (elapsedMs < thresholdMs) {
+      return { ok: false, reason: "Below inactivity threshold" };
+    }
+
+    // Cooldown: don't fire again until the full threshold has elapsed
+    // since the last successful run. Derived from job_runs rather than
+    // an in-memory cache so it survives restart.
+    const stats = this.db.getPulseStats(pulse.id);
+    if (stats.lastRunAt) {
+      const sinceLastRunMs = Date.now() - new Date(stats.lastRunAt).getTime();
+      if (sinceLastRunMs < thresholdMs) {
+        return { ok: false, reason: "Cooldown active" };
+      }
+    }
+
+    // Optional random jitter — linear-ramp probability inside the window.
+    if (pulse.randomIntervalMin && pulse.randomIntervalMax) {
+      const windowStartMs = pulse.randomIntervalMin * 1000;
+      const windowEndMs = pulse.randomIntervalMax * 1000;
+      if (elapsedMs < windowStartMs) {
+        return { ok: false, reason: "Too early even with jitter" };
+      }
+      if (elapsedMs <= windowEndMs) {
+        const windowProgress = (elapsedMs - windowStartMs) /
+          (windowEndMs - windowStartMs);
+        const probability = Math.min(0.4, windowProgress * 0.6);
+        if (Math.random() > probability) {
+          return { ok: false, reason: "Jitter probability gate" };
+        }
+      }
+      // Past the window: fall through and fire.
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * The agentic loop — same shape as before, just with explicit
+   * job_id-based bookkeeping. The scheduler tracks status/duration; this
+   * function focuses on streaming and broadcasting.
+   */
+  private async runAgenticLoop(
+    pulse: PulseRow,
+    triggerSource: PulseTriggerSource,
+    chainDepth: number,
+    jobId: string,
+  ): Promise<HandlerResult> {
+    let conversationId: string | null = pulse.conversationId;
+
+    // For visible mode with no assigned conversation, create a dedicated one.
+    if (!conversationId && pulse.chatMode === "visible") {
+      const conv = this.db.createConversation(`[Pulse] ${pulse.name}`);
+      conversationId = conv.id;
+      this.db.updatePulse(pulse.id, { conversationId });
+    }
+
+    // For silent mode with no conversation, create a temporary one.
+    if (!conversationId && pulse.chatMode === "silent") {
+      const conv = this.db.createConversation(`[Pulse:silent] ${pulse.name}`);
+      conversationId = conv.id;
+    }
+
+    console.log(
+      `[Pulse] Executing "${pulse.name}" (trigger: ${triggerSource}, chain: ${chainDepth}, job: ${
+        jobId.slice(0, 8)
+      })`,
+    );
+
+    const entityConfig: EntityConfig = {
+      projectRoot: this.config.projectRoot,
+      chatRAG: this.config.chatRAG,
+      mcpClient: this.config.mcpClient,
+      lorebookManager: this.config.lorebookManager,
+      vaultManager: this.config.vaultManager,
+      webSearchSettings: this.config.webSearchSettings?.(),
+      discordSettings: this.config.discordSettings?.(),
+      homeSettings: this.config.homeSettings?.(),
+      imageGenSettings: this.config.imageGenSettings?.(),
+      lovenseSettings: this.config.lovenseSettings?.(),
+      buttplugSettings: this.config.buttplugSettings?.(),
+      deviceStatusCache: this.config.deviceStatusCache?.(),
+      contextLength: this.config.contextLength?.(),
+      maxTokens: this.config.maxTokens?.(),
+    };
+
+    const turn = new EntityTurn(
+      this.getLlm(),
+      this.db,
+      this.tools,
+      entityConfig,
+    );
+
+    // Broadcast the Pulse prompt message to the chat in real time
+    if (pulse.chatMode === "visible" && conversationId) {
+      try {
+        const pulseMsg: Message = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: pulse.promptText,
+          createdAt: new Date(),
+          pulseId: pulse.id,
+          pulseName: pulse.name,
+        };
+        const msgHtml = renderMessage(pulseMsg);
+        getBroadcaster().broadcastUpdate({
+          target: "#messages",
+          html: msgHtml,
+          swap: "beforeend",
+        }, conversationId);
+      } catch {
+        // Broadcaster may have no connected clients
+      }
+    }
+
+    let fullContent = "";
+
+    try {
       for await (
         const chunk of turn.process(conversationId!, pulse.promptText, {
           pulseId: pulse.id,
@@ -665,8 +717,7 @@ export class PulseEngine {
           skipStickyDecrement: true,
         })
       ) {
-        // Check if this Pulse was aborted by the user
-        if (this.abortedPulses.has(pulseId)) {
+        if (this.abortedPulses.has(pulse.id)) {
           console.log(`[Pulse] "${pulse.name}" aborted by user`);
           break;
         }
@@ -706,11 +757,7 @@ export class PulseEngine {
             }
             break;
           case "tool_result": {
-            toolCallsCount++;
             if (pulse.chatMode === "visible" && conversationId) {
-              // Truncate tool result content before broadcasting to keep
-              // the JSON valid on the client side. The LLM still receives
-              // the full result in its agentic loop context.
               const result = chunk.result;
               const MAX_TOOL_CONTENT = 50 * 1024;
               const content = result.content;
@@ -749,7 +796,6 @@ export class PulseEngine {
       if (pulse.chatMode === "visible" && conversationId) {
         try {
           getBroadcaster().broadcastEvent("done", {}, conversationId);
-          // Fallback: tell client to reload messages in case streaming was missed
           getBroadcaster().broadcastEvent(
             "pulse_complete",
             { conversationId },
@@ -760,60 +806,23 @@ export class PulseEngine {
         }
       }
 
-      // Complete the run record
       const resultSummary = fullContent.length > 500
         ? fullContent.substring(0, 500) + "..."
         : fullContent;
 
-      this.db.completePulseRun(runId, {
-        status: "success",
-        resultSummary,
-        toolCallsCount,
-        outputContent: pulse.chatMode === "silent" ? fullContent : null,
-      });
-
-      this.db.updatePulseRunStats(pulseId, "success");
-
-      // Execute chained pulses
-      if (pulse.chainPulseIds.length > 0) {
-        for (const nextPulseId of pulse.chainPulseIds) {
-          try {
-            await this.executePulse(
-              nextPulseId,
-              "chain",
-              chainDepth + 1,
-              runId,
-            );
-          } catch (chainError) {
-            console.error(
-              `[Pulse] Chain error from "${pulse.name}" -> "${nextPulseId}":`,
-              chainError instanceof Error
-                ? chainError.message
-                : String(chainError),
-            );
-          }
-        }
-      }
-
-      // Auto-delete for entity-created one-shot pulses
-      if (pulse.autoDelete) {
-        this.deletePulseAndRuns(pulseId);
-        console.log(
-          `[Pulse] Auto-deleted "${pulse.name}" after successful execution`,
-        );
-      }
+      return { status: "success", result: resultSummary };
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error
+        ? error.message
+        : String(error);
       console.error(`[Pulse] Error executing "${pulse.name}":`, errorMessage);
 
-      // Notify the client of the error
       if (pulse.chatMode === "visible" && conversationId) {
         try {
           getBroadcaster().broadcastEvent("status", {
             error: `Pulse error: ${errorMessage}`,
           }, conversationId);
           getBroadcaster().broadcastEvent("done", "error", conversationId);
-          // Fallback: tell client to reload messages in case streaming was missed
           getBroadcaster().broadcastEvent(
             "pulse_complete",
             { conversationId },
@@ -824,26 +833,15 @@ export class PulseEngine {
         }
       }
 
-      // Complete run record with error status so it doesn't stay stuck as "running"
-      if (runId) {
-        this.db.completePulseRun(runId, {
-          status: "error",
-          errorMessage,
-        });
-      }
-      this.db.updatePulseRunStats(pulseId, "error");
-    } finally {
-      this.runningPulses.delete(pulseId);
-      this.abortedPulses.delete(pulseId);
-      this.semaphore.release();
+      // Rethrow so the scheduler marks the run `error` / `dead`.
+      throw error;
     }
   }
 
   /**
-   * Delete a pulse and clean up its resources.
+   * Delete a pulse and clean up its resources. Used by auto-delete.
    */
   private deletePulseAndRuns(pulseId: string): void {
-    // Close filesystem watcher if any
     const watcher = this.fsWatchers.get(pulseId);
     if (watcher) {
       try {
@@ -852,7 +850,7 @@ export class PulseEngine {
       this.fsWatchers.delete(pulseId);
       this.fsDebounce.delete(pulseId);
     }
-
+    this.scheduler.removeSchedule(this.scheduleIdFor(pulseId));
     this.db.deletePulse(pulseId);
   }
 }

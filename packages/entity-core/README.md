@@ -30,7 +30,7 @@ ENTITY_CORE_DATA_DIR=./my-data deno task start   # custom data directory
 Point any MCP client at it as a stdio server:
 
 ```bash
-deno run -A --unstable-cron path/to/entity-core/src/mod.ts
+deno run -A path/to/entity-core/src/mod.ts
 ```
 
 ## MCP tool surface
@@ -57,12 +57,12 @@ Psycheros spawns entity-core as a subprocess when MCP is enabled:
 PSYCHEROS_MCP_ENABLED=true deno task dev    # inside packages/psycheros
 ```
 
-| Variable                 | Default                                                |
-| ------------------------ | ------------------------------------------------------ |
-| `PSYCHEROS_MCP_ENABLED`  | `false` — enable the MCP connection                    |
-| `PSYCHEROS_MCP_COMMAND`  | `deno`                                                 |
-| `PSYCHEROS_MCP_ARGS`     | `run -A --unstable-cron <path>/entity-core/src/mod.ts` |
-| `PSYCHEROS_MCP_INSTANCE` | `psycheros` — instance ID for memory tagging           |
+| Variable                 | Default                                      |
+| ------------------------ | -------------------------------------------- |
+| `PSYCHEROS_MCP_ENABLED`  | `false` — enable the MCP connection          |
+| `PSYCHEROS_MCP_COMMAND`  | `deno`                                       |
+| `PSYCHEROS_MCP_ARGS`     | `run -A <path>/entity-core/src/mod.ts`       |
+| `PSYCHEROS_MCP_INSTANCE` | `psycheros` — instance ID for memory tagging |
 
 ## Environment
 
@@ -91,8 +91,8 @@ data/
 `sqlite-vec` extension auto-downloads from GitHub releases on first use.
 
 For the agent's-eye view of the codebase — why snapshots are load-bearing, how
-consolidation cron is wired, the `periods.ts` ISO-week trap — see
-[`CLAUDE.md`](CLAUDE.md).
+the consolidation schedules are wired through the durable scheduler, the
+`periods.ts` ISO-week trap — see [`CLAUDE.md`](CLAUDE.md).
 
 ## Deep references
 

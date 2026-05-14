@@ -118,17 +118,17 @@ is handled by entity-core via MCP.
 
 ## MCP Integration (entity-core)
 
-| Variable                      | Default                                                | Description                                                                                                                     |
-| ----------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `PSYCHEROS_MCP_ENABLED`       | `true`                                                 | Enable connection to entity-core (set to `false` to disable)                                                                    |
-| `PSYCHEROS_MCP_COMMAND`       | `deno`                                                 | Command to spawn entity-core                                                                                                    |
-| `PSYCHEROS_MCP_ARGS`          | `run -A --unstable-cron <path>/entity-core/src/mod.ts` | Arguments for entity-core                                                                                                       |
-| `PSYCHEROS_MCP_INSTANCE`      | `psycheros`                                            | Instance ID for this embodiment                                                                                                 |
-| `ENTITY_CORE_LLM_API_KEY`     | —                                                      | Override API key for entity-core's LLM (memory-to-graph extraction). Falls back to active profile's API key, then `ZAI_API_KEY` |
-| `ENTITY_CORE_LLM_BASE_URL`    | —                                                      | Override LLM endpoint for entity-core. Falls back to active profile's base URL, then `ZAI_BASE_URL`                             |
-| `ENTITY_CORE_LLM_MODEL`       | —                                                      | Override model for entity-core extraction. Falls back to active profile's model, then `ZAI_MODEL`                               |
-| `ENTITY_CORE_LLM_TEMPERATURE` | —                                                      | Override temperature for entity-core extraction. Falls back to `0.3`                                                            |
-| `ENTITY_CORE_LLM_MAX_TOKENS`  | —                                                      | Override max tokens for entity-core extraction. Falls back to `8000`                                                            |
+| Variable                      | Default                                | Description                                                                                                                     |
+| ----------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `PSYCHEROS_MCP_ENABLED`       | `true`                                 | Enable connection to entity-core (set to `false` to disable)                                                                    |
+| `PSYCHEROS_MCP_COMMAND`       | `deno`                                 | Command to spawn entity-core                                                                                                    |
+| `PSYCHEROS_MCP_ARGS`          | `run -A <path>/entity-core/src/mod.ts` | Arguments for entity-core                                                                                                       |
+| `PSYCHEROS_MCP_INSTANCE`      | `psycheros`                            | Instance ID for this embodiment                                                                                                 |
+| `ENTITY_CORE_LLM_API_KEY`     | —                                      | Override API key for entity-core's LLM (memory-to-graph extraction). Falls back to active profile's API key, then `ZAI_API_KEY` |
+| `ENTITY_CORE_LLM_BASE_URL`    | —                                      | Override LLM endpoint for entity-core. Falls back to active profile's base URL, then `ZAI_BASE_URL`                             |
+| `ENTITY_CORE_LLM_MODEL`       | —                                      | Override model for entity-core extraction. Falls back to active profile's model, then `ZAI_MODEL`                               |
+| `ENTITY_CORE_LLM_TEMPERATURE` | —                                      | Override temperature for entity-core extraction. Falls back to `0.3`                                                            |
+| `ENTITY_CORE_LLM_MAX_TOKENS`  | —                                      | Override max tokens for entity-core extraction. Falls back to `8000`                                                            |
 
 Psycheros automatically forwards the **active LLM profile's** credentials to
 entity-core so that knowledge graph extraction works out of the box. When the

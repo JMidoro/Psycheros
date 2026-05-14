@@ -62,13 +62,11 @@ export const syncMcpTool: Tool = {
         };
       }
 
-      // Pull latest from entity-core
+      // Pull canonical identity from entity-core. Pending local writes
+      // are pushed automatically by the scheduler's
+      // `mcp.push-identity-change` jobs — I just report how many are
+      // still in flight.
       const identity = await mcpClient.pull();
-
-      // Push any pending changes
-      const pushSuccess = await mcpClient.push();
-
-      // Get pending counts
       const pending = mcpClient.getPendingCount();
 
       const parts: string[] = [`${logPrefix} Sync completed.`];
@@ -82,14 +80,12 @@ export const syncMcpTool: Tool = {
         );
       }
 
-      if (pushSuccess) {
-        parts.push("Pushed pending changes successfully.");
-      } else {
-        parts.push("Push returned false (may have conflicts).");
-      }
-
       if (pending.identity > 0) {
-        parts.push(`Still pending: ${pending.identity} identity changes.`);
+        parts.push(
+          `${pending.identity} identity write(s) pending — will sync within ~5s.`,
+        );
+      } else {
+        parts.push("No pending local writes.");
       }
 
       return {

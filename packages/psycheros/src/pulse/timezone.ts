@@ -1,9 +1,11 @@
 /**
  * Timezone Conversion Helpers
  *
- * Converts between user-facing local times and UTC cron expressions
- * so that Deno.cron (which always interprets in UTC) fires at the
- * correct local wall-clock time for the user's configured display timezone.
+ * Converts between user-facing local times and UTC cron expressions so
+ * that schedules fire at the correct local wall-clock time for the
+ * user's configured display timezone. The scheduler evaluates cron
+ * expressions in UTC, so I store UTC-shifted expressions on save and
+ * shift them back to local on display.
  *
  * @module
  */

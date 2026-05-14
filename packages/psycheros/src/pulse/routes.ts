@@ -229,7 +229,7 @@ function translateFormData(body: Record<string, unknown>): {
  */
 export function handlePulseFragment(ctx: RouteContext): Response {
   const pulses = ctx.db.listPulses();
-  const html = renderPulseSettings(pulses);
+  const html = renderPulseSettings(pulses, (id) => ctx.db.getPulseStats(id));
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -284,7 +284,7 @@ export function handlePulseLogFragment(ctx: RouteContext, url: URL): Response {
  */
 export function handlePulseListFragment(ctx: RouteContext): Response {
   const pulses = ctx.db.listPulses();
-  const html = renderPulseList(pulses);
+  const html = renderPulseList(pulses, (id) => ctx.db.getPulseStats(id));
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -489,7 +489,7 @@ export function handleDeletePulse(
 
   // Return the pulse list view
   const pulses = ctx.db.listPulses();
-  const html = renderPulseSettings(pulses);
+  const html = renderPulseSettings(pulses, (id) => ctx.db.getPulseStats(id));
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
@@ -525,10 +525,7 @@ export function handleTriggerPulse(
   const engine =
     (ctx as RouteContext & { pulseEngine?: PulseEngine }).pulseEngine;
   if (engine) {
-    // Fire and forget
-    engine.executePulse(pulseId, "manual", 0, null).catch((err) => {
-      console.error(`[Pulse] Manual trigger error:`, err);
-    });
+    engine.triggerPulse(pulseId, "manual", 0, null);
   }
 
   return new Response(JSON.stringify({ status: "triggered", pulseId }), {
@@ -629,22 +626,16 @@ export function handleWebhookTrigger(
     }
   }
 
-  // Rate limit check
   const engine =
     (ctx as RouteContext & { pulseEngine?: PulseEngine }).pulseEngine;
   if (engine) {
-    const rateCheck = engine.checkWebhookTrigger(targetPulse.id);
-    if (!rateCheck.ok) {
-      return new Response(JSON.stringify({ error: rateCheck.error }), {
+    const result = engine.triggerWebhook(targetPulse.id);
+    if (!result.ok) {
+      return new Response(JSON.stringify({ error: result.error }), {
         status: 429,
         headers: { "Content-Type": "application/json" },
       });
     }
-
-    // Fire and forget
-    engine.executePulse(targetPulse.id, "webhook", 0, null).catch((err) => {
-      console.error(`[Pulse] Webhook trigger error:`, err);
-    });
   }
 
   return new Response(

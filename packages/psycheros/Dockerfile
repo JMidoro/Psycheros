@@ -94,10 +94,12 @@ COPY packages/psycheros/deno.json /app/packages/psycheros/deno.json
 COPY packages/entity-core/deno.json /app/packages/entity-core/deno.json
 COPY packages/entity-loom/deno.json /app/packages/entity-loom/deno.json
 COPY packages/launcher/deno.json /app/packages/launcher/deno.json
+COPY packages/scheduler/deno.json /app/packages/scheduler/deno.json
 
-# Source for the two packages that run in this image
+# Source for the packages that run in (or are imported by) this image
 COPY packages/psycheros /app/packages/psycheros/
 COPY packages/entity-core /app/packages/entity-core/
+COPY packages/scheduler /app/packages/scheduler/
 
 # Entrypoint script — co-located with the psycheros package
 RUN chmod +x /app/packages/psycheros/entrypoint.sh
@@ -124,8 +126,8 @@ RUN cd /app/packages/psycheros && deno cache npm:@huggingface/transformers@3.3.1
 
 # Warm-start both apps to cache any remaining transitive JSR deps
 # (e.g. @denosaurs/plug → @std/path@0.217.0 pulled by @db/sqlite)
-RUN cd /app/packages/entity-core && timeout 5s deno run -A --unstable-cron src/mod.ts || true
-RUN cd /app/packages/psycheros && timeout 10s deno run -A --unstable-cron src/main.ts || true
+RUN cd /app/packages/entity-core && timeout 5s deno run -A src/mod.ts || true
+RUN cd /app/packages/psycheros && timeout 10s deno run -A src/main.ts || true
 
 # Create volume-mounted directories (will be overlaid by volume mounts)
 # Note: /app/packages/psycheros/memories is NOT listed — entrypoint symlinks
@@ -160,7 +162,7 @@ ENV PSYCHEROS_HOST=0.0.0.0
 ENV PSYCHEROS_PORT=3000
 ENV PSYCHEROS_MCP_ENABLED=true
 ENV PSYCHEROS_MCP_COMMAND=deno
-ENV PSYCHEROS_MCP_ARGS="run -A --cached-only --unstable-cron /app/packages/entity-core/src/mod.ts"
+ENV PSYCHEROS_MCP_ARGS="run -A --cached-only /app/packages/entity-core/src/mod.ts"
 ENV PSYCHEROS_ENTITY_CORE_DATA_DIR=/app/packages/entity-core/data
 
 # Debug SSH defaults — disabled unless explicitly enabled at runtime.
@@ -189,4 +191,4 @@ WORKDIR /app/packages/psycheros
 
 # Entrypoint seeds identity templates, then execs into dumb-init → deno
 ENTRYPOINT ["/app/packages/psycheros/entrypoint.sh"]
-CMD ["deno", "run", "-A", "--cached-only", "--unstable-cron", "/app/packages/psycheros/src/main.ts"]
+CMD ["deno", "run", "-A", "--cached-only", "/app/packages/psycheros/src/main.ts"]

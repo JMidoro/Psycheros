@@ -58,13 +58,13 @@ Memories are organized hierarchically. All memories are **permanently retained**
 daily → weekly → monthly → yearly
 ```
 
-| Granularity     | Description                           | Status                                                                  |
-| --------------- | ------------------------------------- | ----------------------------------------------------------------------- |
-| **Daily**       | Auto-generated conversation summaries | Created during conversations (by embodiments)                           |
-| **Weekly**      | Consolidated from daily               | Startup catch-up + cron (Sunday 5 AM) + `memory_consolidate` tool       |
-| **Monthly**     | Consolidated from weekly              | Startup catch-up + cron (1st of month 5 AM) + `memory_consolidate` tool |
-| **Yearly**      | Consolidated from monthly             | Startup catch-up + cron (January 1st 5 AM) + `memory_consolidate` tool  |
-| **Significant** | Permanently remembered events         | Created manually                                                        |
+| Granularity     | Description                           | Status                                                                           |
+| --------------- | ------------------------------------- | -------------------------------------------------------------------------------- |
+| **Daily**       | Auto-generated conversation summaries | Created during conversations (by embodiments)                                    |
+| **Weekly**      | Consolidated from daily               | Startup catch-up + scheduler (Sun 5 AM UTC) + `memory_consolidate` tool          |
+| **Monthly**     | Consolidated from weekly              | Startup catch-up + scheduler (1st of month 5 AM UTC) + `memory_consolidate` tool |
+| **Yearly**      | Consolidated from monthly             | Startup catch-up + scheduler (Jan 1 5 AM UTC) + `memory_consolidate` tool        |
+| **Significant** | Permanently remembered events         | Created manually                                                                 |
 
 ### Retention Model
 
@@ -159,4 +159,4 @@ more relevant when searching from Psycheros than from SillyTavern.
 | `src/sync/versioning.ts`            | Vector clock implementation                                                                       |
 | `src/sync/conflict.ts`              | Conflict resolution strategies                                                                    |
 | `src/storage/file-store.ts`         | File-based storage for identity and memory files                                                  |
-| `src/mod.ts`                        | Entry point, consolidation cron jobs, startup catch-up                                            |
+| `src/mod.ts`                        | Entry point, scheduler instantiation, consolidation schedule definitions, startup catch-up        |

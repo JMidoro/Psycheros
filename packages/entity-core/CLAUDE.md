@@ -72,8 +72,11 @@ restore tool depends on it.
 
 ## Memory consolidation
 
-Daily → weekly → monthly → yearly consolidation runs as cron jobs from
-`src/mod.ts`. The consolidator module is `src/consolidation/`:
+Daily → weekly → monthly → yearly consolidation runs through the durable
+scheduler ([`@psycheros/scheduler`](../scheduler/)) — weekly/monthly/yearly
+schedules are defined in `src/mod.ts` against a Scheduler instance whose tables
+live alongside the knowledge graph in `graph.db`. The consolidator module is
+`src/consolidation/`:
 
 - `consolidator.ts` — core logic, LLM calls
 - `prompts.ts` — LLM prompt templates

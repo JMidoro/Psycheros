@@ -4,6 +4,11 @@ All notable changes to entity-loom are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-05-14
+
+### Changed
+- Code formatting refreshed (deno fmt).
+
 ## [0.3.0] - 2026-05-13
 
 ### Added

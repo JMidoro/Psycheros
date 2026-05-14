@@ -111,10 +111,8 @@ export interface MCPClientConfig {
   env?: Record<string, string>;
   /** This embodiment's ID */
   instanceId: string;
-  /** Pull from MCP on startup */
+  /** Whether to pull canonical identity on connect. Default true. */
   syncOnStartup?: boolean;
-  /** Sync interval in milliseconds (0 = disabled) */
-  syncInterval?: number;
   /** Fall back to local files if MCP is unavailable */
   offlineFallback?: boolean;
   /** Full path to deno executable (default: auto-detect) */
@@ -128,7 +126,6 @@ export interface MCPClientConfig {
  */
 const DEFAULT_CONFIG: Partial<MCPClientConfig> = {
   syncOnStartup: true,
-  syncInterval: 5 * 60 * 1000, // 5 minutes
   offlineFallback: true,
   denoPath: "deno",
 };
@@ -152,21 +149,34 @@ export class MCPClient {
     identity: null,
     lastSync: null,
   };
-  private pendingIdentityChanges: Array<{
-    category: "self" | "user" | "relationship" | "custom";
-    filename: string;
-    content: string;
-  }> = [];
-  private syncTimer: number | null = null;
   private intentionalClose = false;
   private lastPingSuccess: Date | null = null;
   private lastPingAttempt: Date | null = null;
   private pingTimer: number | null = null;
   private pingInterval = 30000; // 30 seconds
   private wasAlive = true;
+  /**
+   * Scheduler used to durably enqueue identity-push jobs. Injected after
+   * construction by the server (the scheduler is created later in the
+   * startup sequence). When null I fall back to direct push attempts —
+   * this only happens before the scheduler is wired up.
+   */
+  private scheduler:
+    | import("@psycheros/scheduler").Scheduler
+    | null = null;
 
   constructor(config: MCPClientConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config } as MCPClientConfig;
+  }
+
+  /**
+   * Wire the durable scheduler so identity-change pushes survive
+   * crashes. Called by the server after both pieces are constructed.
+   */
+  setScheduler(
+    scheduler: import("@psycheros/scheduler").Scheduler,
+  ): void {
+    this.scheduler = scheduler;
   }
 
   /**
@@ -300,12 +310,8 @@ export class MCPClient {
         await this.pull();
       }
 
-      // Start periodic sync if configured
-      if (this.config.syncInterval && this.config.syncInterval > 0) {
-        this.startPeriodicSync();
-      }
-
-      // Start health pings
+      // Start health pings — pure liveness probe, not state mutation.
+      // Periodic identity sync is now scheduler-driven; see server.ts.
       this.startHealthPing(30000);
 
       return true;
@@ -329,15 +335,11 @@ export class MCPClient {
   }
 
   /**
-   * Disconnect from the MCP server.
+   * Disconnect from the MCP server. Pending identity-push jobs live in
+   * the scheduler queue — they retry automatically on next boot — so I
+   * have nothing to flush here.
    */
   async disconnect(): Promise<void> {
-    // Stop periodic sync
-    if (this.syncTimer !== null) {
-      clearInterval(this.syncTimer);
-      this.syncTimer = null;
-    }
-
     // Stop health pings
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer);
@@ -346,30 +348,6 @@ export class MCPClient {
     this.lastPingSuccess = null;
     this.lastPingAttempt = null;
     this.wasAlive = true;
-
-    // Push any pending changes — bounded so a slow MCP roundtrip can't keep
-    // the dashboard waiting past its hard timeout. Anything we don't get to
-    // here stays in the local cache and syncs on next start.
-    if (this.pendingIdentityChanges.length > 0) {
-      const PUSH_TIMEOUT_MS = 1500;
-      try {
-        await Promise.race([
-          this.push(),
-          new Promise<void>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("push timeout during disconnect")),
-              PUSH_TIMEOUT_MS,
-            )
-          ),
-        ]);
-      } catch (e) {
-        console.warn(
-          `[MCP] Skipping final push during disconnect (${
-            e instanceof Error ? e.message : String(e)
-          }); changes stay in local cache for next start.`,
-        );
-      }
-    }
 
     // Close connection
     if (this.client) {
@@ -582,62 +560,54 @@ export class MCPClient {
   }
 
   /**
-   * Push pending changes to entity-core.
+   * Push a single identity change to entity-core. Called by the
+   * `mcp.push-identity-change` scheduler handler — each queued change is
+   * its own durable job, so this method handles exactly one write.
+   *
+   * Throws on connection failure or push rejection so the scheduler
+   * marks the job `error` and retries (or `dead` after max_attempts).
    */
-  async push(): Promise<boolean> {
+  async pushIdentityChange(
+    category: "self" | "user" | "relationship" | "custom",
+    filename: string,
+    content: string,
+  ): Promise<void> {
     if (!this.client) {
-      if (this.config.offlineFallback) {
-        console.log("[MCP] Not connected, changes remain pending");
-        return false;
-      }
       throw new Error("[MCP] Not connected to entity-core");
     }
 
-    if (this.pendingIdentityChanges.length === 0) {
-      return true; // Nothing to push
-    }
-
-    try {
-      const result = await this.client.callTool({
-        name: "sync_push",
-        arguments: {
-          instance: {
-            id: this.config.instanceId,
-            type: "psycheros",
-            version: 1,
-          },
-          identityChanges: this.pendingIdentityChanges.map((change) => ({
-            ...change,
-            version: 1,
-            lastModified: new Date().toISOString(),
-            modifiedBy: this.config.instanceId,
-          })),
+    const result = await this.client.callTool({
+      name: "sync_push",
+      arguments: {
+        instance: {
+          id: this.config.instanceId,
+          type: "psycheros",
+          version: 1,
         },
-      });
+        identityChanges: [{
+          category,
+          filename,
+          content,
+          version: 1,
+          lastModified: new Date().toISOString(),
+          modifiedBy: this.config.instanceId,
+        }],
+      },
+    });
 
-      const textContent = extractTextContent(result);
-      if (textContent) {
-        const response = JSON.parse(textContent);
-
-        if (response.success) {
-          // Clear pending changes
-          this.pendingIdentityChanges = [];
-          this.cache.lastSync = new Date().toISOString();
-
-          console.log("[MCP] Pushed changes to entity-core");
-
-          if (response.conflicts && response.conflicts.length > 0) {
-            console.warn("[MCP] Conflicts detected:", response.conflicts);
-          }
-
-          return true;
-        }
-      }
-
-      return false;
-    } catch (error) {
-      console.error("[MCP] Push failed:", error);
-      throw error;
+    const textContent = extractTextContent(result);
+    if (!textContent) {
+      throw new Error("[MCP] sync_push returned no response");
+    }
+    const response = JSON.parse(textContent);
+    if (!response.success) {
+      throw new Error(
+        `[MCP] sync_push rejected: ${response.error ?? "unknown error"}`,
+      );
+    }
+    this.cache.lastSync = new Date().toISOString();
+    if (response.conflicts && response.conflicts.length > 0) {
+      console.warn("[MCP] Conflicts detected:", response.conflicts);
     }
   }
 
@@ -1095,22 +1065,20 @@ export class MCPClient {
   }
 
   /**
-   * Queue an identity file change for sync.
+   * Queue an identity-file change for push to entity-core. Updates my
+   * local cache immediately (so subsequent reads see the change) and
+   * enqueues a durable job in the scheduler that pushes via MCP.
+   *
+   * Durability: if the process dies before the push lands, the job
+   * stays `pending` and retries on next boot. There is no in-memory
+   * write buffer to lose.
    */
   queueIdentityChange(
     category: "self" | "user" | "relationship" | "custom",
     filename: string,
     content: string,
   ): void {
-    // Remove any existing pending change for this file
-    this.pendingIdentityChanges = this.pendingIdentityChanges.filter(
-      (c) => !(c.category === category && c.filename === filename),
-    );
-
-    // Add the new change
-    this.pendingIdentityChanges.push({ category, filename, content });
-
-    // Update local cache
+    // Update local cache so subsequent reads see the change.
     if (this.cache.identity) {
       const files = this.cache.identity[category];
       const existingIndex = files.findIndex((f) => f.filename === filename);
@@ -1127,6 +1095,19 @@ export class MCPClient {
           category,
         });
       }
+    }
+
+    if (this.scheduler) {
+      this.scheduler.enqueue({
+        handler: "mcp.push-identity-change",
+        payload: { category, filename, content },
+        maxAttempts: 5,
+      });
+    } else {
+      console.warn(
+        "[MCP] Scheduler not wired; identity change for " +
+          `${category}/${filename} cached locally but not enqueued for push`,
+      );
     }
   }
 
@@ -1402,12 +1383,17 @@ export class MCPClient {
   }
 
   /**
-   * Get pending changes count.
+   * Get pending identity-push count, derived from the scheduler's
+   * pending `mcp.push-identity-change` jobs.
    */
   getPendingCount(): { identity: number } {
-    return {
-      identity: this.pendingIdentityChanges.length,
-    };
+    if (!this.scheduler) return { identity: 0 };
+    const { total } = this.scheduler.listJobRuns({
+      handler: "mcp.push-identity-change",
+      status: "pending",
+      limit: 1,
+    });
+    return { identity: total };
   }
 
   /**
@@ -1558,27 +1544,6 @@ export class MCPClient {
       console.error("[MCP] snapshot_restore failed:", error);
       return { success: false, error: String(error) };
     }
-  }
-
-  /**
-   * Start periodic sync.
-   * Does a full sync: pull first (to get remote changes), then push (to send local changes).
-   */
-  private startPeriodicSync(): void {
-    if (this.syncTimer !== null) {
-      clearInterval(this.syncTimer);
-    }
-
-    this.syncTimer = setInterval(async () => {
-      try {
-        // Pull first to get any remote changes
-        await this.pull();
-        // Then push any pending local changes
-        await this.push();
-      } catch (error) {
-        console.error("[MCP] Periodic sync failed:", error);
-      }
-    }, this.config.syncInterval!);
   }
 
   // ========================================

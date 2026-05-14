@@ -17,8 +17,9 @@ import {
   queryLogs,
 } from "./logger.ts";
 import { collectDiagnostics } from "./diagnostics.ts";
-import { getAllJobs, triggerJob } from "./cron-tracker.ts";
+import type { Scheduler } from "@psycheros/scheduler";
 import {
+  buildAdminJobsViewModel,
   renderAdminActions,
   renderAdminDiagnostics,
   renderAdminEntityData,
@@ -137,39 +138,52 @@ export async function handleAdminDiagnosticsAPI(
 
 /**
  * GET /fragments/admin/jobs — Scheduled jobs dashboard fragment.
+ * Reads from the durable scheduler — schedules + derived run stats.
  */
-export function handleAdminJobsFragment(_ctx: RouteContext): Response {
-  const jobs = getAllJobs();
+export function handleAdminJobsFragment(ctx: RouteContext): Response {
+  const jobs = ctx.scheduler ? buildAdminJobsViewModel(ctx.scheduler) : [];
   return new Response(renderAdminJobs(jobs), { headers: HTML_HEADERS });
 }
 
 /**
  * GET /api/admin/jobs/rows — HTML partial of job table rows only.
- * Used by HTMX to refresh just the table body without a full panel re-render.
  */
-export function handleAdminJobRowsFragment(_ctx: RouteContext): Response {
-  const jobs = getAllJobs();
+export function handleAdminJobRowsFragment(ctx: RouteContext): Response {
+  const jobs = ctx.scheduler ? buildAdminJobsViewModel(ctx.scheduler) : [];
   return new Response(renderAdminJobRows(jobs), { headers: HTML_HEADERS });
 }
 
 /**
  * GET /api/admin/jobs — JSON scheduled jobs status.
  */
-export function handleAdminJobsAPI(_ctx: RouteContext): Response {
-  const jobs = getAllJobs();
+export function handleAdminJobsAPI(ctx: RouteContext): Response {
+  const jobs = ctx.scheduler ? buildAdminJobsViewModel(ctx.scheduler) : [];
   return new Response(JSON.stringify({ jobs }), { headers: JSON_HEADERS });
 }
 
 /**
- * POST /api/admin/jobs/:id/trigger — Manually trigger a scheduled job.
- * Returns updated job rows HTML for HTMX to swap into the tbody.
+ * POST /api/admin/jobs/:id/trigger — Manually fire a scheduled job by
+ * enqueuing a one-shot job_run for the schedule's handler. The scheduler
+ * picks it up on the next tick (within ~5 seconds).
  */
-export async function handleAdminJobTriggerAPI(
-  _ctx: RouteContext,
-  jobId: string,
-): Promise<Response> {
-  await triggerJob(jobId);
-  const jobs = getAllJobs();
+export function handleAdminJobTriggerAPI(
+  ctx: RouteContext,
+  scheduleId: string,
+): Response {
+  const scheduler: Scheduler | undefined = ctx.scheduler;
+  if (!scheduler) {
+    return new Response(renderAdminJobRows([]), { headers: HTML_HEADERS });
+  }
+  const schedule = scheduler.getSchedule(scheduleId);
+  if (schedule) {
+    scheduler.enqueue({
+      handler: schedule.handler,
+      payload: schedule.payload,
+      maxAttempts: 1,
+    });
+    scheduler.nudge();
+  }
+  const jobs = buildAdminJobsViewModel(scheduler);
   return new Response(renderAdminJobRows(jobs), { headers: HTML_HEADERS });
 }
 

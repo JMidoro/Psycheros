@@ -4,6 +4,50 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-05-14
+
+### Changed
+
+- **Durable scheduler replaces `Deno.cron` everywhere.** Every scheduled or
+  event-triggered task — daily memory summarization, identity snapshots, MCP
+  identity-change pushes, every flavour of Pulse trigger — now routes through a
+  shared `@psycheros/scheduler` workspace package backed by two SQLite tables
+  (`schedules` + `job_runs`). Cron fires missed while the daemon was down are
+  caught up on next boot per each schedule's catch-up policy; in-flight runs at
+  crash are reclaimed instead of orphaned; identity-write pushes survive process
+  death via a durable queue; long-running handlers (LLM streams, multi-step
+  summarization) keep their leases auto-renewed.
+- **Pulse run statistics are derived from `job_runs`, not stored on `pulses`.**
+  The `pulses` table no longer carries `success_count`, `error_count`,
+  `last_run_at`, or `last_status` — these are computed on demand via
+  `DBClient.getPulseStats()`. Existing data is preserved through a one-time
+  migration on first boot.
+- **`Deno.cron` flag retired.** The `--unstable-cron` flag is no longer required
+  in `deno.json` tasks, the Dockerfile, the `.env.example`, or the
+  `PSYCHEROS_MCP_ARGS` default. Existing overrides that still pass it are
+  harmless but unused.
+
+### Removed
+
+- `src/server/cron-tracker.ts` and the legacy `cron_job_runs` / `pulse_runs`
+  tables. The first-boot schema migration folds every legacy row into `job_runs`
+  and drops both tables.
+
+### Migration
+
+This release performs a one-shot SQLite migration on first boot:
+
+- `cron_job_runs` rows fold into `job_runs` as their respective handlers
+  (`memory.summarize-daily`, `identity.snapshot`), then the table is dropped.
+- `pulse_runs` rows fold into `job_runs` as `pulse.execute`, with pulse context
+  preserved in `payload`. Any row left in `running` state from a previous
+  process is marked `dead` with a reclaim explanation. The legacy table is
+  dropped.
+- The `pulses` table is rebuilt in place to remove the four denormalized
+  run-stat columns; every other column and every row is preserved.
+
+Migration is idempotent — safe to run on a DB that's already been migrated.
+
 ## [0.2.0] - 2026-05-13
 
 ### Added

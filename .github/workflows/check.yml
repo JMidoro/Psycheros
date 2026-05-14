@@ -48,6 +48,7 @@ jobs:
       - name: Type-check all packages
         run: |
           deno check \
+            packages/scheduler/src/mod.ts \
             packages/entity-core/src/mod.ts \
             packages/entity-loom/src/main.ts \
             packages/psycheros/src/main.ts \
@@ -58,3 +59,6 @@ jobs:
 
       - name: Format check
         run: deno fmt --check
+
+      - name: Run tests
+        run: deno task test

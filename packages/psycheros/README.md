@@ -54,7 +54,7 @@ Browser (HTMX) hits `POST /api/chat`. `EntityTurn` orchestrates the agentic
 loop: load identity (local cache or MCP), gather RAG (chat history, vault,
 lorebook, graph), call the LLM, execute tools, stream SSE back. A second
 persistent SSE channel (`GET /api/events`) carries background updates from
-Pulse, the Discord gateway, and cron tasks.
+Pulse, the Discord gateway, and other scheduled handlers.
 
 `identity/`, `memories/` (cache), `.snapshots/`, and `.psycheros/` are all
 **runtime-only** — gitignored, never committed. To change defaults, edit
