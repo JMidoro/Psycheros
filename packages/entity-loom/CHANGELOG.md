@@ -4,7 +4,15 @@ All notable changes to entity-loom are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.2] - 2026-05-15
+
+### Fixed
+
+- **Progress UI restored on page reload**: The wizard's progress bar now
+  repopulates from the server-side stage-lock snapshot on reconnect, instead of
+  showing a blank screen until the next SSE event.
+- **Browser freeze on large import runs prevented**: DOM updates for long runs
+  (hundreds of conversations) no longer block the main thread.
 
 ### Changed
 
@@ -68,5 +76,8 @@ All notable changes to entity-loom are documented here. The format follows
   - **Kindroid / KinLog** — JSON
 - Five-stage wizard served at `http://localhost:3210`.
 
+[0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.2
+[0.3.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.1
+[0.3.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.0
 [0.2.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.2.1
 [0.2.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.2.0
