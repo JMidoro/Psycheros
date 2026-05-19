@@ -221,12 +221,18 @@ bottom" approach. Matches standard chat app conventions.
 - **Sending a message always latches** — user intent is unambiguous, view jumps
   to the new message
 
+**Applies to all conversation views:** Both regular chat and Discord channel
+conversations share the same `AutoScroll` module via a common `id="messages"`
+element.
+
 **Self-healing DOM:** The `AutoScroll` module detects stale DOM references (from
 HTMX swaps and `innerHTML` replacements) via `element.isConnected` checks and
 automatically reinitializes.
 
-Implemented in `web/js/psycheros.js`: `AutoScroll` IIFE module. CSS in
-`web/css/components.css`: `.scroll-to-bottom-pill`, `.scroll-pill-badge`.
+Implemented in `web/js/psycheros.js`: `AutoScroll` IIFE module (exposed on
+`Psycheros.autoScrollReinit` / `Psycheros.autoScrollJump` for inline fragment
+scripts). CSS in `web/css/components.css`: `.scroll-to-bottom-pill`,
+`.scroll-pill-badge`.
 
 ## Message Editing
 
@@ -1016,27 +1022,33 @@ button and clear context button.
 **Message display:** User messages labeled "Discord", entity messages labeled
 with the entity's configured name (from General Settings). Messages show
 `<@userId>` mentions with a Discord-blurple highlight (`.discord-mention`
-class). Entity `::react` and `::reply` directives are stripped from display
-(directives can appear anywhere in text, not just on their own line). Context
+class). Entity messages render thinking sections, tool call cards, and text
+content — each in its own collapsible section within the message. Context
 divider messages render with a scissors icon, accent-colored "Context cleared"
 label with timestamp, and gradient horizontal line separator.
 
 **Message editing:** Both user and entity messages are editable (hover reveals
 edit button). Edits affect the local DB copy only, not the original Discord
-message. Uses the same `startMessageEdit`/`saveMessageEdit` JS functions as
-regular conversations, with fallback to `data-conversation-id` DOM attribute for
-conversation ID (since Discord views are loaded via HTMX fragment swap, not URL
-path).
+message. For entity messages, only the text content is editable — thinking and
+tool call sections are preserved. Uses the same
+`startMessageEdit`/`saveMessageEdit` JS functions as regular conversations.
+Conversation ID is resolved from the message element's `data-conversation-id`
+attribute (Discord views are loaded via HTMX fragment swap, so the URL path is
+unreliable). On save, Discord messages are updated in-place rather than
+replacing the DOM element (preserving the Discord-specific layout).
 
-**Context inspector:** Available via header button. Falls back to
-`data-conversation-id` from `.discord-channel-view` element when
-`currentConversationId` is not set.
+**Context inspector:** Available via header button. Always reads the
+conversation ID from the `.discord-channel-view` element's
+`data-conversation-id` attribute (since `currentConversationId` tracks
+sidebar-selected conversations and is not updated for Discord channel
+navigation).
 
 **Clear context:** Inserts a system divider message ("Context cleared at
 {timestamp}") without deleting message history. Messages above the divider
 remain visible in the UI but are not in the entity's context window. System-role
 messages are filtered from the LLM message history to avoid API errors (most
-LLMs only allow system role at position 0). API:
+LLMs only allow system role at position 0). The channel ID for the reload is
+read from the `data-channel-id` attribute on `.discord-channel-view`. API:
 `POST /api/conversations/:id/clear-context`.
 
 **Sidebar filtering:** Discord conversations (`source_type = 'discord'`) are
@@ -1044,12 +1056,12 @@ excluded from the main conversation sidebar. They appear only in the Discord
 Hub.
 
 **Source files:** `src/server/templates.ts` (`renderDiscordChannelView`,
-`formatDiscordMessageContent`), `src/server/routes.ts`
-(`handleClearConversationContext`), `src/db/client.ts` (`insertSystemMessage`,
-`listWebConversations`), `web/js/psycheros.js` (conversation ID fallback in
-`saveMessageEdit`, `loadContextSnapshots`), `web/css/discord.css`
-(`.discord-channel-header`, `.discord-msg-edit-btn`, `.discord-context-divider`,
-`.discord-mention`)
+`formatDiscordMessageContent`, `renderThinkingSection`, `renderToolCard`),
+`src/server/routes.ts` (`handleClearConversationContext`), `src/db/client.ts`
+(`insertSystemMessage`, `listWebConversations`), `web/js/psycheros.js`
+(Discord-aware `startMessageEdit`/`saveMessageEdit`, `loadContextSnapshots`),
+`web/css/discord.css` (`.discord-channel-header`, `.discord-msg-text`,
+`.discord-msg-edit-btn`, `.discord-context-divider`, `.discord-mention`)
 
 ## Discord Hub
 

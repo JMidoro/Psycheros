@@ -116,9 +116,15 @@ if (mcpEnabled) {
   const mcpCommand = Deno.env.get("PSYCHEROS_MCP_COMMAND") || "deno";
   const entityCoreRoot = Deno.env.get("PSYCHEROS_ENTITY_CORE_PATH") ||
     join(config.projectRoot, "..", "entity-core");
-  const mcpArgsStr = Deno.env.get("PSYCHEROS_MCP_ARGS") ||
-    `run -A ${entityCoreRoot}/src/mod.ts`;
-  const mcpArgs = mcpArgsStr.split(" ");
+  // Build argv as a proper array — the previous "interpolate path into one
+  // string then split(' ')" pattern shattered paths containing spaces (e.g.
+  // macOS launcher installs at `~/Library/Application Support/...`). The
+  // env-var override still uses naive split for backwards compat; callers
+  // setting PSYCHEROS_MCP_ARGS are expected to handle escaping themselves.
+  const customArgs = Deno.env.get("PSYCHEROS_MCP_ARGS");
+  const mcpArgs: string[] = customArgs
+    ? customArgs.split(" ")
+    : ["run", "-A", `${entityCoreRoot}/src/mod.ts`];
   const mcpInstance = Deno.env.get("PSYCHEROS_MCP_INSTANCE") || "psycheros";
   const entityCoreDataDir = Deno.env.get("PSYCHEROS_ENTITY_CORE_DATA_DIR") ||
     `${entityCoreRoot}/data`;

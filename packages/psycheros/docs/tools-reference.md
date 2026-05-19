@@ -329,17 +329,22 @@ unsupported image type errors.
 | `src/tools/send-discord-dm.ts` | `send_discord_dm` tool implementation   |
 | `src/llm/discord-settings.ts`  | Settings type, load/save, token masking |
 
-## Discord Gateway: Structured Replies
+## Discord Channel Action Tool
 
-When the entity participates in Discord channels via the Gateway, it has access
-to structured reply capabilities that don't require separate tool calls. These
-are parsed from the entity's natural text output before posting to Discord.
+When the entity participates in Discord channels via the Gateway, it uses the
+`act_in_discord` tool to send messages, add emoji reactions, or both. The tool
+is only available during Discord gateway turns — calling it outside a Discord
+turn returns an error.
 
-### Message Context Format
+### How It Works
 
-Each message the entity sees includes Discord user IDs and message IDs:
+The entity receives channel messages as a user message with a system preamble:
 
 ```
+[System Message: The following messages are piped in from a connected Discord
+channel (#general in the ServerName server). Each message shows the author,
+mention ID, timestamp, and message ID.]
+
 **Alice** (<@123456789>) (3:45 PM) [msg:987654321]:
 Hello there!
 
@@ -347,74 +352,76 @@ Hello there!
 Hey Alice!
 ```
 
-- `<@userId>` — Discord mention format. The entity can include these in replies
-  to ping users. Discord natively renders them as clickable mentions.
-- `[msg:messageId]` — Message ID for use with `::reply` and `::react`
-  directives.
-- `(replying to id)` — Shown when a message is a reply to another message.
+The entity decides whether to respond by calling (or not calling)
+`act_in_discord`. If it has nothing to add, it simply doesn't call the tool — no
+message is sent. Any text the entity outputs without calling the tool stays
+internal and is not sent to Discord.
 
-### Directives
+### Tool: `act_in_discord`
 
-Directives can appear anywhere in the message text (not just on their own line).
-They are stripped from the message before sending — Discord users never see
-them.
+| Field          | Type            | Description                                                                                                                                                |
+| -------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actions`      | array           | All actions the entity wants to take. Batch everything into a single call.                                                                                 |
+| ↳ `message_id` | string          | Target message ID. If `content` is set, the reply threads under this message. If `emoji` is set, reacts to this message. Omit for a plain channel message. |
+| ↳ `content`    | string          | Text to send as a message (2000-char limit). Auto-splits if longer.                                                                                        |
+| ↳ `emoji`      | string or array | One or more emoji to react with. Requires `message_id`.                                                                                                    |
 
-| Directive | Syntax                      | Effect                                               |
-| --------- | --------------------------- | ---------------------------------------------------- |
-| Reply     | `::reply messageId`         | Response threads as a reply to that specific message |
-| React     | `::react messageId :emoji:` | Adds an emoji reaction to that message               |
+**Example — reply to a message and react to another:**
 
-**Example entity output:**
-
+```json
+{
+  "actions": [
+    { "message_id": "987654321", "content": "That's funny!" },
+    { "message_id": "111222333", "emoji": ["thumbsup", "fire"] }
+  ]
+}
 ```
-::react 987654321 :laugh:
-::reply 111222333
-That's funny! <@123456789> you always make me laugh
-```
 
-**Discord users see:** A laugh reaction on message 987654321, and a reply to
-message 111222333 saying "That's funny! @Alice you always make me laugh"
+**Example — react and reply to the same message in one action:**
+
+```json
+{
+  "actions": [
+    { "message_id": "987654321", "content": "Great idea!", "emoji": "heart" }
+  ]
+}
+```
 
 ### Emoji Support
 
-Standard emoji names are mapped to Unicode:
+The emoji field accepts any format the entity sends — Unicode characters (👍,
+🔥, ❤️), shortcode names (thumbsup, heart, fire), or custom server emoji
+(name:id format, e.g. rofl:123456789). Names are resolved to Unicode
+automatically using the `emojilib` dataset (3,600+ shortcodes). The entity never
+sees the lookup — both formats just work.
 
-| Name       | Emoji |
-| ---------- | ----- |
-| thumbsup   | 👍    |
-| thumbsdown | 👎    |
-| heart      | ❤️    |
-| laugh      | 😂    |
-| rofl       | 🤣    |
-| fire       | 🔥    |
-| eyes       | 👀    |
-| think      | 🤔    |
-| wave       | 👋    |
-| pray       | 🙏    |
-| onehundred | 💯    |
-| check      | ✅    |
-| x          | ❌    |
-
-Custom emoji use Discord's `:name:id` format (e.g.
-`::react 123456 :rofl:123456789`).
+Custom server emoji use Discord's `name:id` format (e.g. `rofl:123456789`).
 
 ### Design Principles
 
-These capabilities are **optional** — the entity uses them only when they feel
-natural. Responses are plain channel messages by default (no reply threading, no
-user pings). When someone @mentions the entity, it should respond using
-`::reply` to that message rather than tagging the user back with `<@userId>` —
-Discord's threading already shows who's being addressed. Direct user pings
-(`<@userId>`) are reserved for when the entity specifically needs someone's
-attention (e.g. asking a question, addressing one person in a group). Emoji
-reactions and user pings are occasional social gestures, not defaults.
+The entity batches all its actions into a single tool call. No tool call = pass
+(silence). When someone @mentions the entity, it typically replies to that
+message via threading rather than tagging the user back — Discord's threading
+already shows who's being addressed. Direct user pings (`<@userId>`) are
+reserved for when the entity specifically needs someone's attention. Emoji
+reactions are occasional social gestures, not defaults.
+
+### Auto-enablement
+
+The tool is registered in `DEFAULT_DISABLED_TOOLS` and auto-enabled when the
+Discord Gateway is active (bot token configured + gateway enabled). It is always
+injected into the scoped tool registry during Discord turns regardless of saved
+config (backwards compat).
 
 ### Related Source Files
 
-| File                      | Purpose                                                                         |
-| ------------------------- | ------------------------------------------------------------------------------- |
-| `src/discord/response.ts` | `parseDirectives()`, `executeReactions()`, `encodeEmojiForApi()`                |
-| `src/discord/router.ts`   | `formatAccumulatedMessages()` — enriches messages with user IDs and message IDs |
+| File                          | Purpose                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `src/tools/discord-action.ts` | `act_in_discord` tool implementation                                    |
+| `src/discord/response.ts`     | `encodeEmojiForApi()`, `splitMessage()` shared utilities                |
+| `src/discord/router.ts`       | `formatAccumulatedMessages()` — enriches messages with IDs and mentions |
+| `src/entity/loop.ts`          | Discord interaction system prompt instructions                          |
+| `src/server/server.ts`        | Auto-enablement, `handleDiscordTurn()` preamble, tool injection         |
 
 ## Home Automation Tool
 

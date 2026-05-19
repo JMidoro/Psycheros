@@ -824,11 +824,15 @@ export class Server {
     // Show typing indicator
     await this.discordResponseHandler.triggerTyping(context.channelId);
 
-    // Build a scoped tool registry with only Discord-allowed tools
+    // Build a scoped tool registry with Discord-allowed tools.
+    // Always include act_in_discord even if the user's saved config omits it
+    // (backwards compat for existing gateway configs).
     const { createDefaultRegistry } = await import("../tools/registry.ts");
-    const discordTools = createDefaultRegistry(
-      this.discordGatewayConfig.allowedTools,
-    );
+    const allowedTools = [...this.discordGatewayConfig.allowedTools];
+    if (!allowedTools.includes("act_in_discord")) {
+      allowedTools.push("act_in_discord");
+    }
+    const discordTools = createDefaultRegistry(allowedTools);
 
     // Build the entity config for this turn
     const activeProfile = this.getActiveLLMProfile();
@@ -859,21 +863,29 @@ export class Server {
       },
     );
 
-    // Collect the response content
-    let responseContent = "";
+    // Run the entity turn — act_in_discord tool calls handle sending
+    // messages directly. Accumulated text content is NOT sent to Discord;
+    // it's persisted in the DB for conversation continuity but only tool
+    // calls produce visible Discord output.
     try {
+      // Prepend context header so the entity understands what the user message is
+      const location = context.isDM
+        ? `DM with ${context.senderUsername}`
+        : `#${context.channelName}` +
+          (context.serverName ? ` in the ${context.serverName} server` : "");
+      const header =
+        `[System Message: The following messages are piped in from a connected Discord channel (${location}). Each message shows the author, mention ID, timestamp, and message ID.]\n\n`;
+      const contextualizedMessage = header + userMessage;
+
       for await (
-        const yield_ of turn.process(conversationId, userMessage, {
+        const _ of turn.process(conversationId, contextualizedMessage, {
           sourceType: "discord",
           discordContext: context,
           skipStickyDecrement: true,
           skipUserPersist: context.skipUserMessagePersist,
         })
       ) {
-        if (yield_.type === "content") {
-          responseContent += yield_.content;
-        }
-        // We could stream partial responses to Discord, but for now accumulate
+        // Consume the generator — tool calls within the loop handle Discord output
       }
     } catch (error) {
       console.error(
@@ -882,15 +894,9 @@ export class Server {
       );
     }
 
-    // Post the response to Discord
-    if (responseContent.trim()) {
-      await this.discordResponseHandler.sendMessage(
-        context.channelId,
-        responseContent.trim(),
-      );
-    } else if (context.activeTier) {
+    if (context.activeTier) {
       console.log(
-        `[Discord] Channel ${context.channelId}: entity chose not to respond (tier: ${context.activeTier})`,
+        `[Discord] Channel ${context.channelId}: entity turn completed (tier: ${context.activeTier})`,
       );
     }
   }
@@ -1073,6 +1079,9 @@ export class Server {
     }
     if (this.discordSettings.enabled && this.discordSettings.botToken) {
       autoEnabled.push("send_discord_dm");
+    }
+    if (this.discordSettings.gatewayEnabled && this.discordSettings.botToken) {
+      autoEnabled.push("act_in_discord");
     }
     if (this.homeSettings.devices.some((d) => d.enabled)) {
       autoEnabled.push("control_device");

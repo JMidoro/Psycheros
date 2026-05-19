@@ -113,8 +113,9 @@ export function getDefaultDiscordGatewayConfig(): DiscordGatewayConfig {
       "look_closer",
       "create_significant_memory",
       "vault",
+      "act_in_discord",
     ],
-    debounceWindowMs: 4000,
+    debounceWindowMs: 5000,
     maxBufferSize: 50,
     activeModeTiers: {
       slowToMediumThreshold: 2,

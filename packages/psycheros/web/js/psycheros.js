@@ -3004,11 +3004,15 @@ function hideContextViewer() {
 async function loadContextSnapshots() {
   // Capture the target conversation ID at fetch time to guard against race conditions:
   // the user may switch conversations between when the fetch starts and completes.
-  // For regular conversations, use currentConversationId; for Discord views, fall back to DOM.
-  let targetConversationId = currentConversationId;
-  if (!targetConversationId) {
-    const channelView = document.querySelector('.discord-channel-view');
-    targetConversationId = channelView?.dataset.conversationId || null;
+  // Discord channel views carry their conversation ID in the DOM (data-conversation-id),
+  // since currentConversationId tracks sidebar-selected conversations and is not updated
+  // when navigating to Discord channels.
+  const channelView = document.querySelector('.discord-channel-view');
+  let targetConversationId;
+  if (channelView) {
+    targetConversationId = channelView.dataset.conversationId || null;
+  } else {
+    targetConversationId = currentConversationId;
   }
 
   if (!targetConversationId) {
@@ -3033,8 +3037,15 @@ async function loadContextSnapshots() {
     selectedSnapshotIdx = -1;
   }
 
-  // Discard results if the user has switched conversations during the fetch
-  if (currentConversationId !== targetConversationId) return;
+  // Discard results if the user has switched conversations during the fetch.
+  const activeChannelView = document.querySelector('.discord-channel-view');
+  let activeConvId;
+  if (activeChannelView) {
+    activeConvId = activeChannelView.dataset.conversationId || null;
+  } else {
+    activeConvId = currentConversationId;
+  }
+  if (activeConvId !== targetConversationId) return;
 
   renderContextInspector();
 }
@@ -3705,8 +3716,10 @@ function startMessageEdit(messageId) {
     targetEl = assistantText;
     originalContent = assistantText.dataset.rawContent || assistantText.textContent || '';
   } else {
-    // For user messages, target .msg-content; for Discord messages, target .discord-msg-content
-    targetEl = msgElement.querySelector('.msg-content') || msgElement.querySelector('.discord-msg-content');
+    // For Discord entity messages, target .discord-msg-text (excludes thinking/tool sections)
+    // For Discord user messages, .discord-msg-text is also used
+    // For regular user messages, target .msg-content
+    targetEl = msgElement.querySelector('.discord-msg-text') || msgElement.querySelector('.msg-content');
     if (!targetEl) return;
     originalContent = targetEl.dataset.rawContent || targetEl.textContent || '';
   }
@@ -3770,12 +3783,12 @@ function cancelMessageEdit(messageId) {
   const editContainer = msgElement.querySelector('.msg-edit-container');
   if (editContainer) editContainer.remove();
 
-  // Show content (could be .assistant-text for assistant or .msg-content for user)
+  // Show content (could be .assistant-text for assistant or .msg-content/.discord-msg-text for user)
   const assistantText = msgElement.querySelector('.assistant-text');
   if (assistantText) {
     assistantText.style.display = '';
   } else {
-    const contentEl = msgElement.querySelector('.msg-content');
+    const contentEl = msgElement.querySelector('.msg-content') || msgElement.querySelector('.discord-msg-text');
     if (contentEl) contentEl.style.display = '';
   }
 
@@ -3804,11 +3817,14 @@ async function saveMessageEdit(messageId) {
     return;
   }
 
-  // Get conversation ID from URL, fall back to DOM attribute (Discord views)
-  const pathParts = window.location.pathname.split('/');
-  let conversationId = pathParts[2]; // /c/{id}
-  if (!conversationId || !conversationId.match(/^[a-f0-9-]+$/)) {
-    conversationId = msgElement.dataset.conversationId;
+  // Get conversation ID — prefer DOM attribute (always correct), fall back to URL path
+  let conversationId = msgElement.dataset.conversationId;
+  if (!conversationId) {
+    const pathParts = window.location.pathname.split('/');
+    conversationId = pathParts[2]; // /c/{id}
+    if (conversationId && !conversationId.match(/^[a-f0-9-]+$/)) {
+      conversationId = null;
+    }
   }
 
   if (!conversationId) {
@@ -3840,16 +3856,39 @@ async function saveMessageEdit(messageId) {
       throw new Error(error.error || 'Failed to update message');
     }
 
-    // Get updated message HTML
-    const updatedHtml = await response.text();
-
-    // Replace the entire message element with the updated one
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = updatedHtml;
-    const newMsgElement = tempDiv.firstElementChild;
-
-    if (newMsgElement) {
-      msgElement.replaceWith(newMsgElement);
+    // For Discord messages, update in-place to preserve Discord DOM structure
+    const isDiscord = msgElement.closest('.discord-channel-view') !== null;
+    if (isDiscord) {
+      // Update the text element's content and raw-content attribute
+      const textEl = msgElement.querySelector('.discord-msg-text');
+      if (textEl) {
+        textEl.dataset.rawContent = newContent;
+        // Simple formatting: escape HTML, highlight mentions
+        textEl.innerHTML = newContent
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/&lt;@(\d+)&gt;/g, '<span class="discord-mention">@$1</span>');
+      }
+      // Add (edited) indicator if not already present
+      if (!msgElement.querySelector('.msg-edited-indicator')) {
+        const timeEl = msgElement.querySelector('.discord-msg-time');
+        if (timeEl) {
+          const edited = document.createElement('span');
+          edited.className = 'msg-edited-indicator';
+          edited.textContent = '(edited)';
+          timeEl.after(edited);
+        }
+      }
+      // Remove edit container and restore display
+      cancelMessageEdit(messageId);
+    } else {
+      // For regular messages, replace the entire message element with updated HTML
+      const updatedHtml = await response.text();
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = updatedHtml;
+      const newMsgElement = tempDiv.firstElementChild;
+      if (newMsgElement) {
+        msgElement.replaceWith(newMsgElement);
+      }
     }
 
     showToast('Message updated');
@@ -3994,6 +4033,9 @@ globalThis.Psycheros = {
   savePulse,
   // Significant memory
   createSignificantMemory,
+  // Auto-scroll (for inline scripts in fragments)
+  autoScrollReinit: () => AutoScroll.reinit(),
+  autoScrollJump: () => AutoScroll.jumpToBottom(),
 };
 
 /**

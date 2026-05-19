@@ -2,33 +2,108 @@
  * Discord Response Handler
  *
  * Posts entity responses back to Discord channels.
- * Handles message splitting, rate limiting, reply threading,
- * and structured directive parsing (::react, ::reply).
+ * Handles message splitting, rate limiting, reply threading.
  */
 
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
+
+// =============================================================================
+// Shared utilities (exported for use by the act_in_discord tool)
+// =============================================================================
+
+/**
+ * Build a reverse lookup: shortcode name → unicode character.
+ * Loaded from emojilib at module init — covers all standard emoji.
+ */
+import emojiData from "emojilib" with { type: "json" };
+
+const EMOJI_BY_NAME: Record<string, string> = {};
+for (const [char, names] of Object.entries(emojiData)) {
+  for (const name of names as string[]) {
+    EMOJI_BY_NAME[name.toLowerCase()] = char;
+  }
+}
+
+/**
+ * Encode an emoji for the Discord reactions API URL.
+ * Accepts unicode characters, shortcode names, and custom emoji (name:id).
+ */
+export function encodeEmojiForApi(emoji: string): string {
+  // Custom emoji: name:id (e.g. rofl:123456789)
+  if (/^[a-zA-Z0-9_]+:\d+$/.test(emoji)) return emoji;
+
+  // Strip wrapping colons if present (:smile: → smile)
+  let name = emoji;
+  if (name.startsWith(":") && name.endsWith(":")) {
+    name = name.slice(1, -1);
+  }
+
+  // If it's already a unicode emoji, encode directly
+  if (/[^ -~\n\r\t]/.test(name)) {
+    return encodeURIComponent(name);
+  }
+
+  // Try shortcode name lookup
+  const resolved = EMOJI_BY_NAME[name.toLowerCase()];
+  if (resolved) return encodeURIComponent(resolved);
+
+  // Fall through — URL-encode as-is
+  return encodeURIComponent(name);
+}
+
+/**
+ * Split a message into chunks that fit within Discord's 2000 char limit.
+ * Tries to split at natural boundaries (newlines, then spaces).
+ */
+export function splitMessage(content: string, maxLength: number): string[] {
+  if (content.length <= maxLength) return [content];
+
+  const chunks: string[] = [];
+  let remaining = content;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Try to find a good split point
+    let splitIndex = maxLength;
+
+    // Prefer splitting at double newlines (paragraph breaks)
+    const paragraphBreak = remaining.lastIndexOf("\n\n", maxLength);
+    if (paragraphBreak > maxLength * 0.3) {
+      splitIndex = paragraphBreak + 2;
+    } else {
+      // Fall back to single newline
+      const lineBreak = remaining.lastIndexOf("\n", maxLength);
+      if (lineBreak > maxLength * 0.3) {
+        splitIndex = lineBreak + 1;
+      } else {
+        // Fall back to space
+        const spaceBreak = remaining.lastIndexOf(" ", maxLength);
+        if (spaceBreak > maxLength * 0.3) {
+          splitIndex = spaceBreak + 1;
+        }
+      }
+    }
+
+    chunks.push(remaining.slice(0, splitIndex).trimEnd());
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  return chunks.filter((c) => c.length > 0);
+}
+
+// =============================================================================
+// ResponseHandler
+// =============================================================================
 
 interface ParsedResponse {
   content: string;
   replyToId: string | null;
   reactions: Array<{ messageId: string; emoji: string }>;
 }
-
-const COMMON_EMOJI: Record<string, string> = {
-  thumbsup: "\u{1F44D}",
-  thumbsdown: "\u{1F44E}",
-  heart: "\u{2764}\u{FE0F}",
-  laugh: "\u{1F602}",
-  rofl: "\u{1F923}",
-  fire: "\u{1F525}",
-  eyes: "\u{1F440}",
-  think: "\u{1F914}",
-  wave: "\u{1F44B}",
-  pray: "\u{1F64F}",
-  onehundred: "\u{1F4AF}",
-  check: "\u{2705}",
-  x: "\u{274C}",
-};
 
 export class ResponseHandler {
   private token: string;
@@ -71,7 +146,7 @@ export class ResponseHandler {
 
     // Send text content (if any remains after stripping directives)
     if (parsed.content.trim()) {
-      const chunks = this.splitMessage(
+      const chunks = splitMessage(
         parsed.content,
         DISCORD_MAX_MESSAGE_LENGTH,
       );
@@ -213,7 +288,7 @@ export class ResponseHandler {
   ): Promise<void> {
     for (const reaction of reactions) {
       try {
-        const encoded = this.encodeEmojiForApi(reaction.emoji);
+        const encoded = encodeEmojiForApi(reaction.emoji);
         await new Promise((resolve) => setTimeout(resolve, 250));
 
         const resp = await fetch(
@@ -234,29 +309,6 @@ export class ResponseHandler {
   }
 
   /**
-   * Encode an emoji name for the Discord reactions API URL.
-   * Standard names (:thumbsup:) → Unicode, URL-encoded.
-   * Custom format (:name:id) → passed as name:id.
-   */
-  private encodeEmojiForApi(emoji: string): string {
-    // Custom emoji: name:id (e.g. rofl:123456789)
-    if (/^[a-zA-Z0-9_]+:\d+$/.test(emoji)) return emoji;
-
-    // Strip wrapping colons if present (:thumbsup: → thumbsup)
-    let name = emoji;
-    if (name.startsWith(":") && name.endsWith(":")) {
-      name = name.slice(1, -1);
-    }
-    name = name.toLowerCase();
-
-    const unicode = COMMON_EMOJI[name];
-    if (unicode) return encodeURIComponent(unicode);
-
-    console.warn(`[Discord] Unknown emoji: ${emoji}`);
-    return encodeURIComponent(emoji);
-  }
-
-  /**
    * Set bot presence (typing indicator).
    */
   async triggerTyping(channelId: string): Promise<void> {
@@ -268,49 +320,5 @@ export class ResponseHandler {
     } catch {
       // Ignore typing indicator failures
     }
-  }
-
-  /**
-   * Split a message into chunks that fit within Discord's 2000 char limit.
-   * Tries to split at natural boundaries (newlines, then spaces).
-   */
-  private splitMessage(content: string, maxLength: number): string[] {
-    if (content.length <= maxLength) return [content];
-
-    const chunks: string[] = [];
-    let remaining = content;
-
-    while (remaining.length > 0) {
-      if (remaining.length <= maxLength) {
-        chunks.push(remaining);
-        break;
-      }
-
-      // Try to find a good split point
-      let splitIndex = maxLength;
-
-      // Prefer splitting at double newlines (paragraph breaks)
-      const paragraphBreak = remaining.lastIndexOf("\n\n", maxLength);
-      if (paragraphBreak > maxLength * 0.3) {
-        splitIndex = paragraphBreak + 2;
-      } else {
-        // Fall back to single newline
-        const lineBreak = remaining.lastIndexOf("\n", maxLength);
-        if (lineBreak > maxLength * 0.3) {
-          splitIndex = lineBreak + 1;
-        } else {
-          // Fall back to space
-          const spaceBreak = remaining.lastIndexOf(" ", maxLength);
-          if (spaceBreak > maxLength * 0.3) {
-            splitIndex = spaceBreak + 1;
-          }
-        }
-      }
-
-      chunks.push(remaining.slice(0, splitIndex).trimEnd());
-      remaining = remaining.slice(splitIndex).trimStart();
-    }
-
-    return chunks.filter((c) => c.length > 0);
   }
 }

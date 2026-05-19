@@ -23,4 +23,8 @@ export type {
 } from "./router.ts";
 
 export { ConversationMapper } from "./conversation-map.ts";
-export { ResponseHandler } from "./response.ts";
+export {
+  encodeEmojiForApi,
+  ResponseHandler,
+  splitMessage,
+} from "./response.ts";

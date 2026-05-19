@@ -10,7 +10,8 @@
     "mammoth": "npm:mammoth@^1.8.0",
     "xlsx": "npm:xlsx@^0.18.5",
     "web-push": "npm:web-push@^3.6",
-    "@zendrex/buttplug.js": "npm:@zendrex/buttplug.js@^0.3"
+    "@zendrex/buttplug.js": "npm:@zendrex/buttplug.js@^0.3",
+    "emojilib": "npm:emojilib@^3"
   },
   "tasks": {
     "dev": "deno run --watch -A src/main.ts",

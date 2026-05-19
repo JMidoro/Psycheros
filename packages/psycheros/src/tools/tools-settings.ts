@@ -47,6 +47,7 @@ export const DEFAULT_DISABLED_TOOLS: ReadonlySet<string> = new Set([
   "control_device",
   "control_lovense",
   "control_toy",
+  "act_in_discord",
 ]);
 
 /** Tools that are deprecated and hidden from both the UI and the LLM. Kept in AVAILABLE_TOOLS for potential resurrection. */
@@ -102,8 +103,8 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   {
     id: "discord",
     name: "Discord",
-    description: "Send Discord direct messages to the user",
-    toolNames: ["send_discord_dm"],
+    description: "Discord messaging, replies, and reactions",
+    toolNames: ["send_discord_dm", "act_in_discord"],
   },
   {
     id: "home-automation",

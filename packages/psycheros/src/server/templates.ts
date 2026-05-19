@@ -5300,8 +5300,8 @@ export function renderConnectionsDiscordSettings(
             <div class="llm-field inline" style="flex:1;">
               <label class="settings-label">Debounce (ms)</label>
               <input class="settings-input" type="number" id="discord-debounce"
-                value="${gc?.debounceWindowMs ?? 4000}" min="1000" max="30000">
-              <span class="field-hint">Wait time before responding (default: 4000)</span>
+                value="${gc?.debounceWindowMs ?? 5000}" min="1000" max="30000">
+              <span class="field-hint">Wait time before responding (default: 5000)</span>
             </div>
             <div class="llm-field inline" style="flex:1;">
               <label class="settings-label">Max Buffer</label>
@@ -5472,7 +5472,7 @@ async function saveDiscordSettings(event) {
         blockedBotIds: blockedBots,
         respondToEveryoneHere: document.getElementById('discord-respond-everyone')?.checked ?? true,
         allowedTools,
-        debounceWindowMs: parseInt(document.getElementById('discord-debounce')?.value) || 4000,
+        debounceWindowMs: parseInt(document.getElementById('discord-debounce')?.value) || 5000,
         maxBufferSize: parseInt(document.getElementById('discord-max-buffer')?.value) || 50,
         includeInDailyMemories: document.getElementById('discord-daily-memories')?.checked ?? true,
         memoryInstructions: document.getElementById('discord-memory-instructions')?.value.trim() || '',
@@ -7657,7 +7657,11 @@ function loadDiscordChannel(channelId) {
   chat.innerHTML = '';
   fetch('/fragments/discord/channel/' + channelId)
     .then(r => r.text())
-    .then(h => { chat.innerHTML = h; });
+    .then(h => {
+      chat.innerHTML = h;
+      Psycheros.autoScrollReinit?.();
+      requestAnimationFrame(() => Psycheros.autoScrollJump?.());
+    });
 }
 
 loadDiscordChannelPicker();
@@ -7725,6 +7729,24 @@ export function renderDiscordChannelView(
       </div>`;
     }
 
+    const isTool = msg.role === "tool";
+
+    // Tool results: compact inline card
+    if (isTool) {
+      const isError = msg.content.startsWith("Discord API error") ||
+        msg.content.startsWith("Error");
+      return `<div class="discord-message discord-msg-tool" data-message-id="${
+        escapeHtml(msg.id)
+      }" data-conversation-id="${escapeHtml(convId)}">
+        <div class="discord-msg-header">
+          <span class="discord-msg-role">Tool result</span>
+        </div>
+        <div class="discord-msg-content discord-tool-result${
+        isError ? " discord-tool-result--error" : ""
+      }">${escapeHtml(msg.content)}</div>
+      </div>`;
+    }
+
     const className = isSystem
       ? "discord-msg-system"
       : isUser
@@ -7749,6 +7771,28 @@ export function renderDiscordChannelView(
         </button>`
       : "";
 
+    // For entity messages, render thinking + tool calls + content
+    let contentHtml = "";
+    if (!isUser && !isSystem) {
+      if (msg.reasoningContent) {
+        contentHtml += renderThinkingSection(msg.reasoningContent);
+      }
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        for (const tc of msg.toolCalls) {
+          contentHtml += renderToolCard(tc);
+        }
+      }
+      if (msg.content) {
+        contentHtml += `<div class="discord-msg-text" data-raw-content="${
+          escapeHtml(msg.content)
+        }">${formatDiscordMessageContent(msg.content)}</div>`;
+      }
+    } else {
+      contentHtml = `<div class="discord-msg-text" data-raw-content="${
+        escapeHtml(msg.content)
+      }">${formatDiscordMessageContent(msg.content)}</div>`;
+    }
+
     return `<div class="discord-message ${className}" data-message-id="${
       escapeHtml(msg.id)
     }" data-conversation-id="${escapeHtml(convId)}">
@@ -7760,9 +7804,7 @@ export function renderDiscordChannelView(
         ${editedIndicator}
         ${editBtn}
       </div>
-      <div class="discord-msg-content">${
-      formatDiscordMessageContent(msg.content)
-    }</div>
+      <div class="discord-msg-content">${contentHtml}</div>
     </div>`;
   }).join("");
 
@@ -7781,7 +7823,7 @@ export function renderDiscordChannelView(
 
   return `<div class="settings-view discord-channel-view" data-conversation-id="${
     escapeHtml(convId)
-  }">
+  }" data-channel-id="${escapeHtml(channelId || "")}">
   <div class="discord-channel-header">
     <div class="discord-channel-header-left">
       <button class="settings-back-btn"
@@ -7822,7 +7864,7 @@ export function renderDiscordChannelView(
   }
     </div>
   </div>
-  <div class="discord-channel-messages">
+  <div class="discord-channel-messages" id="messages">
     ${messageHtml || '<p class="empty-text">No messages yet.</p>'}
   </div>
 </div>
@@ -7833,7 +7875,7 @@ function clearDiscordContext(convId) {
     .then(r => r.json())
     .then(data => {
       if (data.success) {
-        const channelId = document.querySelector('.discord-channel-id')?.textContent;
+        const channelId = document.querySelector('.discord-channel-view')?.dataset.channelId;
         if (channelId) {
           htmx.ajax('GET', '/fragments/discord/channel/' + channelId, { target: '#chat' });
         }

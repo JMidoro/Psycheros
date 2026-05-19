@@ -19,6 +19,8 @@
     "npm:@modelcontextprotocol/sdk@1": "1.27.1_zod@3.25.76",
     "npm:@zendrex/buttplug.js@0.3": "0.3.3",
     "npm:dompurify@3": "3.3.3",
+    "npm:emojilib@3": "3.0.0",
+    "npm:emojilib@3.0.0": "3.0.0",
     "npm:fflate@0.8": "0.8.2",
     "npm:jsdom@26": "26.1.0",
     "npm:jszip@3": "3.10.1",
@@ -583,6 +585,9 @@
     },
     "emittery@2.0.0": {
       "integrity": "sha512-FLtgn/CGBXiX3ZtPAm5q4LWWepHChOt55J9u01WFu3dyap2U7IwptlrqoE1COR/kxwdy/DOxIBALSxIW449I1g=="
+    },
+    "emojilib@3.0.0": {
+      "integrity": "sha512-Opb7qfOR/dn0u+ueVYrmCnxrHAgLmaDtAiQ9ogYQcEhwG+MPnuilZey5Y6VVlVXk531JRIGKYIUhySgNqLCfiw=="
     },
     "encodeurl@2.0.0": {
       "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg=="
@@ -1435,6 +1440,7 @@
         "dependencies": [
           "npm:@zendrex/buttplug.js@0.3",
           "npm:dompurify@3",
+          "npm:emojilib@3",
           "npm:jsdom@26",
           "npm:mammoth@^1.8.0",
           "npm:marked@15",

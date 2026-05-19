@@ -126,6 +126,34 @@ export class MessageRouter {
 
   updateConfig(config: DiscordGatewayConfig): void {
     this.deps = { ...this.deps, config };
+
+    // Tear down per-channel state for channels no longer in the config.
+    // Without this, periodic timers and debounce timers keep firing for
+    // removed channels (especially active-mode channels with medium/fast
+    // tiers that have persistent periodic flush timers).
+    const activeChannelIds = new Set<string>();
+    for (const server of config.servers) {
+      for (const ch of server.channels) {
+        activeChannelIds.add(ch.channelId);
+      }
+    }
+
+    for (const channelId of this.buffers.keys()) {
+      if (!activeChannelIds.has(channelId)) {
+        this.clearPeriodicTimer(channelId);
+        const debounce = this.timers.get(channelId);
+        if (debounce) {
+          clearTimeout(debounce);
+          this.timers.delete(channelId);
+        }
+        this.buffers.delete(channelId);
+        this.channelTiers.delete(channelId);
+        this.messageTimestamps.delete(channelId);
+        console.log(
+          `[Discord] Cleaned up state for removed channel ${channelId}`,
+        );
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -343,6 +371,13 @@ export class MessageRouter {
     mode: ChannelMode,
     tier?: ActiveTier,
   ): Promise<void> {
+    // Safety: skip if channel was removed from config between timer ticks
+    if (!this.getChannelConfigByChannelId(channelId)) {
+      this.clearPeriodicTimer(channelId);
+      this.buffers.delete(channelId);
+      return;
+    }
+
     const buffer = this.buffers.get(channelId);
     if (!buffer || buffer.length === 0) return;
 
@@ -526,6 +561,13 @@ export class MessageRouter {
   }
 
   private async onPeriodicFlush(channelId: string): Promise<void> {
+    // Safety: skip if channel was removed from config between timer ticks
+    if (!this.getChannelConfigByChannelId(channelId)) {
+      this.clearPeriodicTimer(channelId);
+      this.buffers.delete(channelId);
+      return;
+    }
+
     const buffer = this.buffers.get(channelId);
     if (!buffer || buffer.length === 0) return;
     if (this.processing.has(channelId)) return;
@@ -603,6 +645,17 @@ export class MessageRouter {
     );
     if (!server) return null;
     return server.channels.find((c) => c.channelId === channelId) ?? null;
+  }
+
+  /** Look up channel config by channel ID alone (server ID unknown). */
+  private getChannelConfigByChannelId(
+    channelId: string,
+  ): DiscordChannelConfig | null {
+    for (const server of this.deps.config.servers) {
+      const ch = server.channels.find((c) => c.channelId === channelId);
+      if (ch) return ch;
+    }
+    return null;
   }
 
   private getServerIdForChannel(channelId: string): string | null {

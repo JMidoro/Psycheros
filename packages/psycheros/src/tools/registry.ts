@@ -29,6 +29,8 @@ import { pulseTool } from "./pulse-tools.ts";
 // import { sendNotificationTool } from "./send-notification.ts";
 // Discord DM tool
 import { sendDiscordDmTool } from "./send-discord-dm.ts";
+// Discord action tool (reply, react)
+import { actInDiscordTool } from "./discord-action.ts";
 // Home automation tool
 import { controlDeviceTool } from "./control-device.ts";
 // Lovense device control tool
@@ -75,6 +77,8 @@ export const AVAILABLE_TOOLS: Record<string, Tool> = {
   // send_notification: sendNotificationTool,
   // Discord DM tool
   send_discord_dm: sendDiscordDmTool,
+  // Discord action tool (reply, react in channels during Discord turns)
+  act_in_discord: actInDiscordTool,
   // Home automation tool
   control_device: controlDeviceTool,
   // Lovense device control tool

@@ -60,6 +60,11 @@ Discord** in the web UI, not via env vars. Settings persist to
 | ------------------------ | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `includeInDailyMemories` | boolean | `true`  | Include Discord activity in daily memory summarization via pre-summarizer                                                                                               |
 | `memoryInstructions`     | string  | `""`    | Instructions for the pre-summarizer and daily memory writer (e.g., handle mappings like "superdog420 is James"). Written in first-person from the entity's perspective. |
+| `debounceWindowMs`       | number  | `5000`  | Wait time (ms) after the last message before flushing the accumulation buffer to the entity. Resets on each new message.                                                |
+
+Channels can be toggled on/off at runtime via the Discord Hub. Removing a
+channel immediately tears down its accumulation buffer, debounce timer, and
+periodic digest timer — no gateway restart needed.
 
 ## Available Tools
 
@@ -86,6 +91,7 @@ Changes hot-reload the tool registry without a restart.
 | `web_search`                | Search the web via Tavily or Brave (auto-enabled when web search provider is set)                      |
 | `pulse`                     | Manage Pulses (create, trigger, delete)                                                                |
 | `send_discord_dm`           | Send a Discord DM to the user (auto-enabled when bot token is configured)                              |
+| `act_in_discord`            | Send messages and reactions in Discord channels (auto-enabled when gateway is active)                  |
 | `control_device`            | Control a smart home device — on/off/status (off by default; auto-enabled when devices are configured) |
 | `control_lovense`           | Control Lovense devices (off by default; auto-enabled when Lovense is configured)                      |
 | `control_toy`               | Control devices via universal protocol (off by default; auto-enabled when Buttplug is configured)      |

@@ -744,15 +744,18 @@ export class EntityTurn {
         }
       }
 
-      // Add structured reply instructions
+      // Add Discord action tool instructions
       parts.push(`
 Discord interaction:
-- Messages I see include <@userId> mention IDs and [msg:messageId] tags
-- When I'm having a conversation with someone on Discord, I use ::reply [messageId] to thread my responses to their messages. This creates a clear, cohesive connection between what they say and what I say in return — it shows I'm responding to something specific, not just speaking into the void.
-- ::reply is a text directive I type inline in my response — NOT a tool call. It gets parsed and stripped before the message is sent to Discord. Example: ::reply 1234567890 followed by my response text
-- I reserve @mentions (<@userId>) for when I genuinely need to draw someone's attention — like asking them a direct question or making sure they see something important. Using @mentions for every reply is redundant when message threading already makes the connection clear.
-- ::react messageId :emoji: — adds an emoji reaction (also invisible to Discord users). Standard: thumbsup, thumbsdown, heart, laugh, rofl, fire, eyes, think, wave, pray, onehundred, check, x. Custom: :name:id
-- General commentary that isn't directed at anyone specific needs no directive at all`);
+- User messages are piped in from a Discord channel. Each line shows: **author** (<@authorId>) (time) [msg:messageId]: content
+- I use the act_in_discord tool to send messages and reactions. Every message I want to appear in Discord must go through this tool — any text I output without calling it stays internal and is not sent to Discord.
+- I batch all my actions into a single tool call. The 'actions' array can hold as many actions as I need — I should not make multiple calls when one will do.
+- Each action can include 'content' (to reply), 'emoji' (one or more, to react), or both on the same 'message_id'.
+- To reply to a specific message, I include 'content' and 'message_id' — my message threads under it. To send a plain channel message, I omit 'message_id'.
+- To react to a message, I include 'emoji' (one or more emoji, e.g. 👍 or ["🔥","💀"]) and 'message_id'.
+- I can combine reply and react in one action: { message_id, content, emoji } replies to and reacts to the same message.
+- If I have nothing to add, I simply don't call the tool. No message is sent. This is a natural pass.
+- I reserve @mentions (<@userId>) for when I genuinely need to draw someone's attention. Using @mentions for every reply is redundant when message threading already makes the connection clear.`);
       discordChannelContent = parts.join("\n");
     }
 
