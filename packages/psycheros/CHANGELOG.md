@@ -4,6 +4,34 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-05-19
+
+### Added
+
+- **`act_in_discord` built-in tool.** Replaces the previous text-directive
+  system (`[DISCORD_SEND_MESSAGE]`, `[DISCORD_ADD_REACTION]`, etc.) with a
+  dedicated, fully-typed tool. Supports sending messages, adding and removing
+  reactions (with Unicode emoji and shortcodes), typing indicators, and channel
+  management — all through the standard tool interface instead of string
+  parsing.
+
+### Fixed
+
+- Discord channel state now tears down cleanly when a channel toggle is turned
+  off, instead of leaving stale listeners.
+- Discord reactions accept any Unicode emoji, not just a hardcoded ASCII subset.
+- Context inspector works correctly for Discord channel conversations (was
+  showing stale or empty context).
+- Channel auto-scroll restored after clearing Discord context.
+- Entity-core MCP subprocess argv is built as a proper array instead of a
+  space-joined string (fixes paths with spaces on Windows).
+
+### Changed
+
+- Discord debounce default changed from 1s to 5s.
+- Documentation refreshed for the new tool system, Discord features, and
+  configuration options.
+
 ## [0.3.2] - 2026-05-14
 
 ### Changed
@@ -202,6 +230,8 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 - Entity identity and memory served by the sibling `entity-core` MCP server,
   spawned as a subprocess when `PSYCHEROS_MCP_ENABLED=true`.
 
+[0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.3.3
+[0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.3.2
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
