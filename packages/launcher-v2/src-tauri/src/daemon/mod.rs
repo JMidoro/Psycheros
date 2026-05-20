@@ -14,6 +14,10 @@ pub mod status;
 
 pub use status::{probe, DaemonState, DaemonStatus};
 
-/// Default port the daemon binds. Overridable via the launcher's config —
-/// but for now we just use 3000 since that's psycheros's longstanding default.
+/// Fallback port when `config.json` is missing or malformed. The
+/// effective port is `LauncherConfig.port` — see [`crate::config`] — and
+/// flows through [`status::probe`] and `build_daemon_config` to keep the
+/// probe, the supervisor install, and the backup/restore HTTP calls in
+/// agreement. 3000 is psycheros's longstanding default for fresh
+/// installs.
 pub const DAEMON_PORT: u16 = 3000;

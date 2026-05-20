@@ -8,7 +8,7 @@ const purify = DOMPurify(jsdom.window);
 
 // Configure marked for Deno-compatible settings
 marked.setOptions({
-  breaks: false, // Use standard markdown line break rules
+  breaks: true, // Preserve line breaks in chat output (e.g. multi-line blockquotes)
   gfm: true, // GitHub Flavored Markdown
 });
 

@@ -48,8 +48,8 @@ The launcher writes everything under the OS-conventional app-data dir:
 
 ```
 ~/Library/Application Support/Psycheros/   (macOS — equivalent paths on Linux/Windows)
-├── config.json          User prefs (port, autostart toggle, names, timezone)
-├── source/              Extracted release bundle
+├── config.json          User prefs (port, daemon_mode, bundled_source_version)
+├── source/              Shallow git clone of the public Psycheros repo at the installed tag
 │   └── packages/
 │       ├── psycheros/   The daemon source — daemon's `projectRoot`
 │       └── entity-core/ MCP server source
@@ -77,17 +77,21 @@ replaced on auto-update; `data/` is durable across updates.
 ```
 1. User launches Psycheros.app
 2. Launcher detects no config.json — shows first-run welcome
-3. Launcher extracts release-bundle.tar.gz → source/
+3. Launcher resolves the latest `psycheros-v*` tag on the public repo,
+   shallow-clones it into source/
 4. Launcher copies bundled Deno → bin/deno
-5. Launcher runs `deno cache src/main.ts` to warm dep cache (slow — needs progress UI)
-6. Launcher writes config.json with defaults (entity name, timezone, port)
-7. Launcher offers "Install autostart" (not done by default — user opts in)
+5. Launcher runs `deno cache src/main.ts` to warm dep cache (slow — streamed
+   to the bootstrap ticker so the wait is visible)
+6. Launcher writes config.json with the wizard inputs + the cloned tag name
+7. Launcher offers "Install autostart" or "Install for manual start/stop"
 8. On opt-in: write plist + launchctl load -w → daemon starts
 9. Watcher detects daemon Running → webview navigates to localhost:3000
 10. User sees chat UI
 ```
 
-(Steps 3-6 are Phase 2 work; this scaffold has them stubbed.)
+Steps 3-5 are implemented in `src/bundle/mod.rs` — `clone_or_fetch_source`,
+`stage_bundled_deno`, `warm_deno_cache`. See
+[`source-provisioning.md`](source-provisioning.md) for the full mechanics.
 
 ## State flow on subsequent launches
 
@@ -135,23 +139,23 @@ run `pkill -9 -f "deno run -A src/main.ts"`.
 
 ## What lives where (module ↔ responsibility)
 
-| Module                        | Responsibility                                     |
-| ----------------------------- | -------------------------------------------------- |
-| `src/lib.rs`                  | Tauri Builder wiring                               |
-| `src/main.rs`                 | Binary entry                                       |
-| `src/paths.rs`                | All filesystem locations the launcher reads/writes |
-| `src/supervisor/*`            | OS service installation/uninstallation             |
-| `src/daemon/status.rs`        | Detect what state the daemon is in right now       |
-| `src/daemon/navigation.rs`    | Drive webview between manager and chat             |
-| `src/app/state.rs`            | View-mode flag + splash URL + nav dedupe           |
-| `src/app/menu.rs`             | Native menu + accelerators                         |
-| `src/app/mod.rs`              | Watcher thread + menu event handler                |
-| `src/commands.rs`             | Tauri IPC surface — the API the frontend calls     |
-| `src/bundle/*`                | Release-bundle extraction (phase 2)                |
-| `src/config/*`                | `config.json` read/write                           |
-| `frontend/index.html`         | Splash markup + per-state CSS                      |
-| `frontend/js/manager.js`      | State-conditional rendering                        |
-| `frontend/js/tauri-bridge.js` | Single-purpose IPC wrapper                         |
+| Module                        | Responsibility                                              |
+| ----------------------------- | ----------------------------------------------------------- |
+| `src/lib.rs`                  | Tauri Builder wiring                                        |
+| `src/main.rs`                 | Binary entry                                                |
+| `src/paths.rs`                | All filesystem locations the launcher reads/writes          |
+| `src/supervisor/*`            | OS service installation/uninstallation                      |
+| `src/daemon/status.rs`        | Detect what state the daemon is in right now                |
+| `src/daemon/navigation.rs`    | Drive webview between manager and chat                      |
+| `src/app/state.rs`            | View-mode flag + splash URL + nav dedupe                    |
+| `src/app/menu.rs`             | Native menu + accelerators                                  |
+| `src/app/mod.rs`              | Watcher thread + menu event handler                         |
+| `src/commands.rs`             | Tauri IPC surface — the API the frontend calls              |
+| `src/bundle/*`                | Source provisioning — git clone + Deno staging + cache warm |
+| `src/config/*`                | `config.json` read/write                                    |
+| `frontend/index.html`         | Splash markup + per-state CSS                               |
+| `frontend/js/manager.js`      | State-conditional rendering                                 |
+| `frontend/js/tauri-bridge.js` | Single-purpose IPC wrapper                                  |
 
 ## What this is _not_
 

@@ -38,7 +38,15 @@
   "lint": {
     "rules": {
       "exclude": ["no-slow-types"]
-    }
+    },
+    "exclude": [
+      "packages/launcher-v2/"
+    ]
+  },
+  "fmt": {
+    "exclude": [
+      "packages/launcher-v2/e2e/"
+    ]
   },
   "allowScripts": [
     "npm:onnxruntime-node@1.20.1",

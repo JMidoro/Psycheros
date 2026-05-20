@@ -3,70 +3,370 @@
 All notable changes to the Psycheros desktop launcher are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/). It is pre-1.0 until
-cross-platform supervisors and the first-run flow ship.
+cross-platform supervisors ship.
 
-## [Unreleased] — scaffold
+## [Unreleased]
+
+## [0.1.0] - 2025-05-20
 
 ### Added
 
-- Initial package scaffold. Tauri 2.x desktop app shape:
-  - One-window, two-surface architecture (chat + manager) with `Cmd+,` toggle
-    and webview-eval-driven navigation from Rust.
-  - `ServiceSupervisor` trait with full macOS launchd implementation and stub
-    Linux (systemd-user) + Windows (Task Scheduler) impls behind
-    `#[cfg(target_os = ...)]` gates.
-  - Daemon detection via TCP probe + supervisor `is_loaded` check; state machine
-    distinguishes `NotInstalled` / `Installed` / `Running`.
-  - Splash + state-conditional buttons in vanilla HTML/CSS/JS.
-  - Cross-platform path resolution via `dirs` crate
-    (`~/Library/Application
-    Support/Psycheros/` on macOS, equivalent on
-    Linux/Windows).
-  - Tauri commands: `daemon_status`, `install_autostart`, `uninstall_autostart`,
-    `set_view_mode`.
-- `scripts/setup.sh` — dev bootstrap (stage Deno sidecar + RGBA icons).
-- `scripts/bundle-source.sh` — produces `release-bundle.tar.gz` for embedding in
-  the Tauri bundle.
-- Documentation: README, CLAUDE.md, six deep-reference docs covering
-  architecture, supervisors, bundle, frontend, release, migration.
+- **Real brand icons across the launcher and `psycheros` web surface**
+  (`packages/launcher-v2/src-tauri/icons/`, `packages/psycheros/web/icons/`).
+  The launcher's placeholder solid-violet PNGs are replaced with the canonical
+  heart-chip silhouette and the cyan→purple stroke gradient from
+  `site/src/assets/psycheros-logo.svg`. `scripts/setup.sh` regenerates the full
+  Tauri icon set (32x32, 128x128, 128x128@2x, .icns, .ico) from the canonical
+  SVG via `sips` + `npx tauri icon`; the desktop variants are committed,
+  mobile + Windows-tile noise is gitignored. A separate monochrome template
+  variant (`tray-icon-template.svg`/.png) drives the menu-bar tray — macOS
+  auto-tints to light/dark menu-bar themes via the alpha channel.
+- **macOS menu-bar tray (always-on menu-bar agent)**
+  (`src-tauri/src/app/tray.rs`, `src-tauri/src/supervisor/launcher_agent.rs`).
+  The launcher is now a true menu-bar agent: a separate launchd plist
+  (`ai.psycheros.launcher`) auto-starts the launcher at login with
+  `--no-window`, the tray icon is the user's persistent surface, and the manager
+  window is just a feature opened on demand. Hybrid activation policy —
+  `Regular` when the window is visible (dock icon shows), `Accessory` when only
+  the tray is up (dock icon hides) — matches the Tailscale / 1Password /
+  Backblaze convention. Tray menu items: status label, Open chat, Open manager,
+  Stop daemon, View logs, "Start Psycheros at login" checkbox. Left-click
+  dispatches on daemon state (Running → chat, otherwise → manager). Cmd+Q routes
+  through the same hide-then-surfaces-check path as the close button rather than
+  process-killing, so the tray can't be stranded by a reflexive Cmd+Q.
+- **Strict tray = daemon `Running` rule**. The tray icon is visible if and only
+  if the daemon's `/health` probe answers Psycheros. Stop the daemon and the
+  icon vanishes; the user's re-entry is the .app in /Applications. No-surfaces
+  auto-exit retires the launcher process when both the tray and the window are
+  hidden (with a has-been-running gate so login boot waits for the daemon to
+  come up, and a 5-second exit grace so transients don't kill the launcher
+  mid-flight).
+- **HTTP `/health` probe disambiguation** (§probe). The daemon-state probe used
+  to flip to `Running` whenever anything bound the port — a different project's
+  Node dev server, a misconfigured test, etc. Now sends `GET /health` and
+  matches `"name":"psycheros"` in the response body; only Psycheros's own health
+  endpoint answers in that shape. Hand-rolled HTTP/1.1 (no new deps), bounded by
+  a 500ms timeout. Six unit tests on the response-shape recognizer.
+- **`LauncherConfig.port` actually wires through** (§probe + config). The probe
+  and the daemon-config builder now read `cfg.port` instead of the const, so
+  changing port in `config.json` no longer silently breaks backup/restore.
+- **Autostart toggle is a preference change, not a daemon restart**. The
+  Settings-card "Switch to Autostart/Manual" and the tray's "Start Psycheros at
+  login" checkbox both flip a plist-content preference now —
+  `LaunchdSupervisor::set_mode_only` writes the new RunAtLoad / KeepAlive
+  content to the existing plist and returns. No `launchctl unload/load`, no
+  daemon restart, no cascade of dropped HTTP connections through entity-core and
+  the chat surface. macOS picks the new content up at next session load (next
+  login), which is precisely when "autostart at login" matters. The `KeepAlive`
+  crash-restart behavior takes effect at next daemon start.
+- **End-to-end test harness via `tauri-plugin-webdriver`**
+  (`packages/launcher-v2/e2e/`). Closes the largest empirical gap left after the
+  smoke-binary + integration-test pass: the UI ↔ IPC boundary. Twelve specs
+  across three files exercise the real Tauri webview — `smoke` (boots +
+  renders), `wizard` (first-run form interactivity + defaults), `ipc` (read-only
+  commands round-trip through `window.__TAURI__`, unknown commands reject). Each
+  spec spawns a hermetic launcher in a temp `PSYCHEROS_LAUNCHER_DATA_DIR` and
+  tears down on completion. Suite runs in ~2s locally. Opt-in cargo feature
+  `webdriver` keeps the WebDriver server out of release builds. CI runs the
+  suite on macos-14 as a fourth step in the `launcher-v2` job. See
+  [`e2e/README.md`](e2e/README.md).
+- **CI release job for launcher-v2** (§5.23). New `launcher-v2` job in
+  `.github/workflows/release.yml`: macos-14 runner, sets up Rust
+  - Deno, runs `./scripts/setup.sh` + `tauri build` for aarch64-apple-darwin,
+    uploads the resulting `.dmg` + `.app.tar.gz` to the GitHub release page.
+    Triggers on `launcher-v2-v*` tags; the v1 launcher job's matcher tightened
+    to exclude v2 tags so a v2 tag doesn't fire both jobs. `--latest=false`
+    keeps the repo-wide "Latest" badge on the v1 launcher during the transition
+    window per `RELEASES.md`. A `release-footers/launcher-v2.md` covers the
+    unsigned-Gatekeeper dance on the release page.
+- **Operations runbook** (`docs/runbook.md`, §5.26). Symptom → recovery mapping
+  for the common failure modes — crashloops, MCP offline, port conflicts,
+  bootstrap failures, restore errors, etc. Links every symptom to the exact
+  in-app button to click. Linked from the README's Troubleshooting section.
+- **CONTRIBUTING.md** for the launcher-v2 package (§5.25). Dev setup, build
+  commands, gate commands, agent context. The README's former "Building from
+  source (devs)" section is gone — README is now user-focused, CONTRIBUTING is
+  dev-focused.
+- **v1-roadmap.md marked complete** (§5.27). Banner at the top of the doc points
+  future revisions at CHANGELOG entries. The file itself is preserved as the
+  historical artifact of the planning + execution pass.
+- **Migration runner during source updates** (§5.20). Between fetch and
+  warm-cache, `apply_source_update` checks for a
+  `migrations/<from-tag>-to-<to-tag>.ts` file in the cloned source root. When
+  present, runs it via the bundled Deno with `-A` and the user's data dir as its
+  sole argument, streaming stdout + stderr into the update progress ticker (new
+  `migrate` phase). Missing file is a quiet no-op (most version bumps don't need
+  migrations); non-zero exit aborts the update and leaves the source clone +
+  data untouched — maintainers ship idempotent migrations so a retry safely
+  resumes. Skipped on rollback (snapshots restore data directly).
+- **Pin to specific version + rollback affordances** (§5.17 + §5.22).
+  - `apply_source_update` now accepts an optional `target_tag`. With `None` (the
+    default) it queries the latest channel tag and installs that. With
+    `Some("psycheros-v0.3.2")` it installs that specific tag — used by the
+    version picker and effective for forward-pin or rolling forward/back without
+    restoring a snapshot.
+  - `list_available_tags` Tauri command (`bundle::list_tags`) returns every tag
+    on the configured channel, sorted highest semver first. Surfaced in the
+    Settings card as a "Source version" dropdown + "Install version" button.
+  - `rollback_to_snapshot(history_index)` Tauri command: stop daemon → wipe
+    `<data>/.psycheros/` → restore from the entry's snapshot dir → reset source
+    clone to the entry's tag → warm cache → start daemon. Emits the existing
+    `source-update-progress` events with new `rollback-*` phase names so the
+    bootstrap card's progress ticker renders the operation. Surfaced as a "Roll
+    back" button on each rollback-eligible row in the diagnostics card's Update
+    history section.
+- **Pre-update snapshots + persisted update history** (§5.18 + §5.21). Before
+  `apply_source_update` fetches the new tag, the launcher copies
+  `<data>/.psycheros/` into a timestamped directory under
+  `<launcher_data_dir>/.snapshots/`. On success it appends an
+  `UpdateHistoryEntry` (tag / applied_at / previous_tag / snapshot_id) to
+  `LauncherConfig.update_history` (capped at 10 entries; older snapshots pruned
+  in lockstep). The diagnostics card now renders the history as a separate
+  "Update history" section, with applied-at + previous-tag + a "rollback
+  available" marker for entries whose snapshot still exists.
+- **`get_update_history` Tauri command.** Returns the history list with
+  `snapshot_id` cleared on any entry whose snapshot directory has been pruned —
+  so callers can rely on `snapshot_id: Some(_)` meaning the rollback target
+  still exists on disk. Sets up the §5.17 / §5.22 pin + rollback flows that come
+  next.
+- **Mode switch + update channel selection** in the Settings card.
+  - `set_daemon_mode("autostart"|"manual")` overwrites the plist inline (no
+    uninstall/reinstall round trip); the supervisor's `write_and_load_plist`
+    already does unload → write → reload, so the flip is clean. Surfaced as a
+    "Switch to Manual" / "Switch to Autostart" button next to the current-mode
+    row.
+  - `set_update_channel("stable"|"beta")` persists the chosen channel; the next
+    `query_latest_tag` picks up the new prefix via `effective_tag_prefix()`.
+    Stable tracks `psycheros-v*`, Beta tracks `psycheros-beta-v*`.
+  - New `update_channel` field on `LauncherConfig`. Optional + serde default to
+    `None` so old configs parse fine; `effective_channel()` treats `None` as
+    Stable.
+- **Self-repair warnings panel** in the manager card. Renders only when the
+  launcher detects a problem the underlying state probes don't directly expose.
+  Three warning sources for v1.0:
+  - **MCP down** — log-line substring match for psycheros's MCP error patterns;
+    surfaces a "Restart daemon" remediation.
+  - **Crashloop** — daemon-status-changed history; if 3+ Running→Installed
+    transitions occur within a 60-second window, surfaces a "Atlas keeps
+    crashing" warning with a shortcut into the Data card's Re-init flow.
+  - **Port conflict** — when stuck in Installed for >20 seconds, calls
+    `check_port_conflict` (lsof on macOS) and renders the holding process's
+    name + PID so the user knows what to quit.
+- **`check_port_conflict` + `install_xcode_clt` Tauri commands.** Port-conflict
+  uses `lsof -i :<port> -P -n -sTCP:LISTEN -Fpc` on macOS; install_xcode_clt
+  spawns `xcode-select --install`. Linux + Windows return None / Err since their
+  equivalents wait on the not-yet-implemented supervisors. 4 new unit tests on
+  the lsof fielded-output parser.
+- **Git-missing remediation in the bootstrap-error path** (§5.14). When
+  `first_run` fails with the GitMissing fingerprint, the bootstrap card adds an
+  "Install Xcode CLT" button alongside Try Again. Clicking it opens the system
+  installer dialog; the explanatory error copy switches to "click Install in
+  that dialog, then come back here."
+- **Data management card** (`Data` button in the manager footer) with four
+  actions, each behind an in-app confirm:
+  - **Back up** — `backup_data` POSTs to psycheros's
+    `/api/admin/entity-data/export`, streams the resulting zip to
+    `~/Downloads/psycheros-backup-<UTC timestamp>.zip`. Simple confirm; daemon
+    must be Running.
+  - **Restore** — file picker (via `tauri-plugin-dialog`) → daemon's
+    `/api/admin/entity-data/import` → automatic daemon restart on success.
+    Simple confirm.
+  - **Wipe entity data** — typed-confirm `WIPE`; clears the entity data dir
+    (memories / identity / vault / settings / DB) while keeping the OS service
+    registration. First-run re-templates fresh identity files on next daemon
+    boot.
+  - **Re-init** — typed-confirm `REINIT`; uninstalls the service, deletes the
+    cloned source + identity dir, clears `bundled_source_version` so the next
+    launch routes through the first-run wizard. Memories and vault content
+    survive.
+- **Minimal localhost HTTP/1.1 client** (`src/http.rs`). Hand-rolled ~200 lines
+  so the data-management commands can call psycheros's admin API without pulling
+  in `reqwest` + tokio + a TLS stack we don't need for `127.0.0.1` calls. 5 unit
+  tests cover header parsing + the `\r\n\r\n` terminator.
+- **`tauri-plugin-dialog`** for the OS-native file picker (Restore action).
+  `dialog:allow-open` permission added to default capabilities.
+- **Typed-confirm modal** alongside the existing simple-confirm modal. Requires
+  the user to type a specific phrase before the destructive button activates;
+  Esc dismisses; default-focus the input so it's keyboard-accessible.
+- **Settings card** accessible from the manager footer (next to Diagnostics).
+  View-only display of entity name / user name / timezone (from
+  `read_general_settings`) and daemon port. The "Edit in Psycheros" button calls
+  `set_view_mode("chat")` so the user navigates to psycheros's own settings UI
+  for edits — keeping one source of truth for all entity-facing config. Button
+  is disabled (with an explanatory title) when the daemon isn't Running, since
+  the chat view is just a splash in that case.
+- **Log panel filter + search + copy + save + load-more.** Level toggles (info /
+  warn / error) drive a pure-CSS hide via `data-hide-*` attributes on the panel
+  body. Search input does a case-insensitive substring filter, applied to both
+  existing lines and new arrivals from the live tail. Copy uses
+  `navigator.clipboard`; Save downloads a timestamped `.log` via a Blob URL.
+  Load more re-reads `recent_daemon_log_lines` with a doubled tail size (cap 8
+  MB), replacing the current panel content.
+- **Shared `info-grid.js` module.** Renders labeled key/value grids with
+  optional per-row action buttons. Diagnostics and Settings cards both consume
+  it via `.info-grid` / `.info-row` / `.info-row__*` CSS classes.
+  Diagnostics-specific class names (`.diagnostics__*`) renamed to the shared
+  form in the same change.
+- **Diagnostics card** accessible from the manager footer. Read-only snapshot of
+  launcher version, installed source tag, daemon state + PID + last-exit-status
+  (parsed from `launchctl list`), daemon mode, service label, filesystem paths
+  (data dir / source dir / log dir / config / launcher data dir) with per-row
+  "Reveal" buttons that open the path in Finder, recursive byte count of the
+  entity data dir, upstream repo URL + tag prefix. On-demand fetch — no polling
+  — with a Refresh button for re-reading after a daemon restart.
+- **`get_diagnostics` / `open_path` Tauri commands.** Diagnostics builds a full
+  snapshot on a blocking thread (the disk walk and `launchctl list` are
+  I/O-bound); open_path shells to `open` / `xdg-open` / `explorer` per OS.
+- **`ServiceSupervisor::query_runtime_info`** — best-effort
+  `RuntimeInfo { pid, last_exit_status }` parsed from the supervisor's native
+  status output. launchd impl walks `launchctl list <label>` lines; the default
+  trait impl returns `RuntimeInfo::default()`, so Linux / Windows stubs need no
+  per-platform code yet.
+- **`DaemonState::as_str()`** — stable kebab-case string view matching the
+  existing `#[serde(rename_all = "kebab-case")]`, used by diagnostics to surface
+  state without going through serde.
+- **`read_general_settings` Tauri command.** Direct disk read of psycheros's
+  `<data>/.psycheros/general-settings.json`, returning `Option<GeneralSettings>`
+  (None when the file is absent on a fresh install). Works when the daemon is
+  down — used by the wizard's pre-fill, and slated for upcoming diagnostics +
+  settings cards.
+- **Wizard pre-fill from existing general-settings.json.** When the user re-runs
+  the wizard (e.g. after a reinstall that preserved the data dir), the entity
+  name / user name / timezone inputs come up pre-populated from psycheros's own
+  settings rather than the generic defaults. Fresh installs still see the
+  default "Assistant" / "You" / browser-detected timezone.
+- **Source-as-git-clone provisioning.** Replaces the original tarball model.
+  `bundle::clone_or_fetch_source` shallow-clones the public Psycheros repo at
+  the latest matching `psycheros-v*` tag into `<data>/source/` on first run, and
+  fetches forward on update. No source bundled inside the `.app`.
+- **Tag-tracked update detection + apply.** `bundle::query_latest_tag` semver-
+  sorts client-side; `check_for_updates` Tauri command returns
+  `UpdateInfo { current_version, latest_version, update_available }`;
+  `apply_source_update` runs fetch + reset to FETCH_HEAD + warm cache +
+  `supervisor.restart()` with streamed `source-update-progress` events.
+- **Background update watcher** (`src/app/update_watcher.rs`). Polls upstream
+  every 3 hours, emits `update-available`, injects an in-window
+  webview-eval-driven toast on rising-edge transitions. `window.confirm` is
+  blocked in Tauri 2 webviews so we never use it — see "Confirm modal" below.
+- **Manual daemon mode**, alongside the existing autostart mode.
+  `DaemonMode { Autostart, Manual }` enum on `LauncherConfig`. Supervisor trait
+  grew `install_autostart`, `install_manual`, `start_daemon`, `stop_daemon`,
+  `is_installed`. launchd impl writes two plist variants (autostart =
+  `RunAtLoad=true` + `KeepAlive=true`; manual omits `KeepAlive`). Stop is
+  session-scoped `launchctl unload` (no `-w`) so autostart users can pause for
+  the session without flipping their persistent enable state.
+- **New `Stopped` daemon state** in `daemon::probe`. Plist file present but not
+  loaded in launchctl = user manually stopped (vs. NotInstalled = never
+  installed). The manager card renders a Start daemon affordance in Stopped, and
+  the state survives across launcher restarts.
+- **Universal Start / Stop buttons.** Work in both autostart and manual modes.
+  Available from Running (Stop), Stopped (Start), and Installed (Stop, for the
+  rare crashlooping case).
+- **Live daemon log panel** in the manager card. `src/app/log_tailer.rs` polls
+  `<data>/logs/daemon.stderr.log` every ~1.5s and emits `daemon-log-line`
+  events. Frontend renders most recent ~300 lines with INFO/WARN/ERROR
+  coloring + auto-scroll + Clear button. `recent_daemon_log_lines` command
+  populates the panel on manager init.
+- **First-run welcome wizard** (`frontend/js/first-run.js`). Three-field form
+  (entity name / user name / timezone with IANA dropdown), then the bootstrap
+  card with live progress ticker (git clone → stage Deno → warm cache).
+- **Loud action-feedback UX.** Card-level action-progress banner with spinner +
+  pulsing accent glow during any in-flight action. Button-level busy state with
+  solid accent fill + trailing spinner + label swap ("Stop daemon" →
+  "Stopping…"). Mis-click protection: while one button is busy, all sibling
+  buttons in the same card are disabled.
+- **In-app confirm modal** replacing `window.confirm` (which Tauri 2 blocks
+  silently). Themed to match the launcher, default-focused on Cancel for
+  destructive actions, Esc dismisses. Wired to Uninstall.
+- **Gatekeeper documentation** in `README.md` — right-click → Open + `xattr`
+  one-liner. v2 ships unsigned by deliberate decision.
 
-### Carried over from earlier research spike
+### Changed
 
-(The spike directory was kept locally during development and removed once this
-scaffold was complete — its findings live on in this CHANGELOG and the docs/
-tree.)
+- **Wizard inputs no longer cached in `LauncherConfig`.** Dropped `entity_name`,
+  `user_name`, `timezone` from the launcher config — they live exclusively in
+  psycheros's `general-settings.json` now. Caching them on the launcher side
+  caused drift the moment the user edited their entity name via psycheros's
+  settings UI: the launcher's stale copy would re-stamp the file on next
+  install. Single source of truth, owned by psycheros. Upgrade is automatic —
+  serde ignores the legacy fields and they drop out of `config.json` on next
+  save.
+- **Migration story rewritten** to use Psycheros's native
+  `/api/admin/entity-data/{export,import}` round-trip rather than a
+  launcher-specific copy script. Removes parallel migration code and inherits
+  the daemon-side fixes (post-import MCP restart, vault scope, etc.) for free.
+  See `docs/migration.md`.
+- **Docs refreshed** for the git-clone source model: `docs/bundle.md` renamed to
+  `docs/source-provisioning.md` and rewritten; `docs/architecture.md` +
+  `docs/release.md` tarball-era language swept; `docs/migration.md` rewritten.
+- **`bundled_source_version`** now stores the tag name (e.g. `psycheros-v0.3.3`)
+  rather than a SHA. Easier to read in config + UI.
+- **Confirm dialog default-focus** on Cancel (was none) — Enter on accident
+  doesn't fire destructive actions.
+- **Snapshot rollback is atomic** via a rename swap in
+  `restore_directory_atomically` (`src-tauri/src/commands.rs`). The previous
+  flow removed `<data>/.psycheros/` first and then copied the snapshot in — a
+  mid-copy failure left a half-restored directory. New flow copies the snapshot
+  to a sibling `.psycheros.tmp/`, renames the live dir aside to
+  `.psycheros.old/`, promotes the temp dir into place, then deletes the backup.
+  If promotion fails, the backup is renamed back. Two tests cover the happy path
+  and the absent-snapshot branch.
 
-All architectural decisions and non-obvious findings from the spike's empirical
-research:
+### Removed
 
-- `withGlobalTauri: true` is mandatory for plain HTML/JS frontends.
-- Capture splash URL dynamically (`window.url()`) — dev and prod use different
-  schemes.
-- Drive cross-origin navigation from Rust (`webview.eval`), not JS.
-- Skip no-op navigations (`location.replace(sameURL)` reloads).
-- Tauri icon validator requires RGBA (color type 6).
-- `launchctl list <label>` exit codes (0 / 113), not stdout.
-- `KeepAlive=true` makes "stop temporarily" semantically impossible.
-- View-mode state via a single `user_summoned: AtomicBool`.
+- **Embedded `release-bundle.tar.gz`** and the `bundle.resources` entry in
+  `tauri.conf.json`. The `.app` no longer ships a source tarball.
+- **`scripts/bundle-source.sh`** — produced the now-unused tarball. Deleted.
+- **`scripts/migrate-from-v1.sh`** — replaced by Psycheros's native export/
+  import flow.
+- **`autostart_installed` field** from `LauncherConfig` — dead field, never read
+  after install. Subsumed by `daemon_mode` semantics + on-disk probe.
+- **`flate2` + `tar` Cargo deps** — no longer needed without the tarball.
 
-### Prerequisite landed in psycheros
+### Fixed
 
-- `PSYCHEROS_DATA_DIR` env in psycheros 0.3+ (separate `projectRoot` from
-  `dataRoot`) — the launcher sets this in every OS service definition so the
-  daemon writes runtime state to `<launcher_data_dir>/data/` regardless of where
-  the source bundle lives.
+- **MCP path-shattering bug** in `packages/psycheros/src/main.ts:119-121` —
+  `mcpArgsStr.split(" ")` shattered paths containing spaces (broke the
+  launcher's macOS install path `~/Library/Application Support/...`). Fix: build
+  argv as a proper array. Shipped in `psycheros-v0.3.3`. See staging commit
+  `2b84cbf`.
+- **Post-update UI race** — `daemon_status` called immediately after
+  `supervisor.restart()` could capture a transient `Installed` state before the
+  daemon rebound the port. Manager now polls daemon_status for up to 30s after
+  applying an update, rendering each intermediate state.
+- **Tauri-2 sidecar resolution** — `resolve_sidecar_deno` tries four candidate
+  paths (`deno`, `deno-<triple>`, `binaries/deno`, `binaries/deno-<triple>`)
+  since Tauri's runtime layout for `externalBin` differs between dev and prod.
+- **`git reset --hard origin/<branch>`** for tag fetches — switched to
+  `FETCH_HEAD` which works for both branches and tags. Annotated tags peel to
+  their commit automatically.
+- **`--progress` on `git reset`** — emitted from `clone_or_fetch_source`'s reset
+  step, where `--progress` is rejected as a usage error (exit 129). Removed from
+  the reset args; kept on clone/fetch where it's accepted.
+- **Migration pipe deadlock** in `run_migration_if_present`
+  (`src-tauri/src/commands.rs`). Previous code drained the child `deno`'s stderr
+  to EOF and _then_ stdout to EOF — if stdout's ~64 KB pipe buffer filled while
+  we were still reading stderr, the child blocked writing and the migration
+  hung. Rewrote as two reader threads feeding an mpsc channel, so both streams
+  drain concurrently and lines interleave in arrival order.
 
 ### Known gaps (not yet implemented)
 
-- Linux + Windows supervisors return `NotImplemented`. Trait, plist rendering
-  pattern, and integration tests are ready for them; see per-module doc comments
-  for implementation notes.
-- First-run install flow (clone-monorepo equivalent for a `.app` / `.exe` /
-  `.AppImage`): `bundle::extract_release_bundle`, `bundle::stage_bundled_deno`,
-  `bundle::warm_deno_cache` are implemented as stubs. Phase 2 work.
-- Auto-update via `tauri-plugin-updater`: dep present, no signing key
-  configured. Phase 5 work.
-- Manager surface beyond install/uninstall: logs viewer, settings editor,
-  migration runner, "force resync identity" — phase 3-4 work.
-- Code signing / notarization: none (Gatekeeper / SmartScreen workaround
-  documented in `docs/release.md`).
+- Linux + Windows supervisors return `NotImplemented`. Trait + stubs +
+  module-doc implementation notes are in place; cross-platform work resumes when
+  development moves to those machines.
+- Auto-update for the Tauri shell binary via `tauri-plugin-updater`: not
+  initialized. The plugin can't run without a real Ed25519 signing key, a
+  manifest endpoint, and a CI signing step — all three need to land together
+  (faked any one of them and the plugin either crashes at startup or is
+  functionally inert). The four-step maintainer checklist is in `src/lib.rs`
+  next to where the `.plugin()` call belongs. Source-side updates ship via the
+  tag-tracking flow and don't depend on this; only the launcher's own `.app`
+  shell binary still needs manual re-download on new releases until the keypair
+  work happens.
+- Real icon set (§5.24): blocked on a 1024² source PNG. The launcher currently
+  ships placeholder violet squares. Once the design asset is provided, generate
+  via `cargo tauri icon <path>` from `packages/launcher-v2/`; the script
+  overwrites `src-tauri/icons/`.
+- Code signing / notarization: none, by decision. Gatekeeper / SmartScreen
+  workaround documented in README + `docs/release.md`.

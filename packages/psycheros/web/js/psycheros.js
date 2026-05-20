@@ -634,6 +634,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if ((targetId === 'chat' || targetId === 'settings-content') && document.getElementById('graph-container')) {
       loadGraphView();
     }
+
+    // Discord Hub: re-trigger channel picker loading on HTMX re-swap.
+    // The inline script may not re-execute on subsequent swaps.
+    if (targetId === 'chat' && document.getElementById('discord-channel-picker') && typeof loadDiscordChannelPicker === 'function') {
+      loadDiscordChannelPicker();
+    }
   });
 });
 
@@ -1630,6 +1636,10 @@ function stripEntityXml(text) {
   result = result.replace(/\n{3,}/g, '\n\n');
   return result;
 }
+
+// Configure marked to match server-side settings — preserves line breaks in
+// blockquotes and other multi-line content (e.g. group chat transcripts).
+marked.setOptions({ breaks: true, gfm: true });
 
 /** Debounce timer for progressive markdown rendering */
 let _renderTimer = null;

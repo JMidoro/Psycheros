@@ -47,15 +47,13 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  background-color: var(--c-accent);
-  border-radius: 0;
   flex-shrink: 0;
-  overflow: hidden;
 }
 
-.logo-icon img {
+.logo-icon svg {
   width: 100%;
   height: 100%;
+  display: block;
 }
 
 .logo-sub {
@@ -848,7 +846,7 @@
   filter: drop-shadow(0 0 12px var(--c-accent-glow));
 }
 
-.empty-logo img {
+.empty-logo svg {
   display: block;
 }
 

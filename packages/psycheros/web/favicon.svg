@@ -2,28 +2,68 @@
   xmlns="http://www.w3.org/2000/svg"
   width="32"
   height="32"
-  viewBox="0 0 32 32"
+  viewBox="0 0 836 836"
 >
-  <rect width="32" height="32" fill="#0a0a0a" />
+  <defs>
+    <linearGradient
+      id="grad"
+      x1="0"
+      y1="0"
+      x2="836"
+      y2="0"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="7%" stop-color="#00D2FF" />
+      <stop offset="25%" stop-color="#66BEFE" />
+      <stop offset="50%" stop-color="#A989FD" />
+      <stop offset="75%" stop-color="#C54EFE" />
+      <stop offset="93%" stop-color="#D200FF" />
+      <stop offset="100%" stop-color="#D200FF" />
+    </linearGradient>
+  </defs>
+
   <g
-    transform="translate(4,4)"
     fill="none"
-    stroke="#a855f7"
-    stroke-width="1.5"
-    stroke-linecap="round"
+    stroke="url(#grad)"
+    stroke-width="28"
     stroke-linejoin="round"
+    stroke-linecap="round"
+    stroke-miterlimit="1"
   >
     <path
-      d="M12 21C12 21 3 14.5 3 8.5C3 5.5 5.5 3 8.5 3C10.4 3 12 4.2 12 4.2C12 4.2 13.6 3 15.5 3C18.5 3 21 5.5 21 8.5C21 14.5 12 21 12 21Z"
+      stroke-linejoin="miter"
+      stroke-miterlimit="20"
+      d="M 232,76
+             C 116,76 19,178 19,300
+             C 3,460 200,560 418,810
+             C 636,560 833,460 817,300
+             C 817,178 720,76 604,76
+             C 528,76 452,130 418,179
+             C 384,130 308,76 232,76 Z"
     />
-    <rect x="9" y="9" width="6" height="6" rx="0.5" />
-    <line x1="11" y1="9" x2="11" y2="7" />
-    <line x1="13" y1="9" x2="13" y2="7" />
-    <line x1="11" y1="15" x2="11" y2="17" />
-    <line x1="13" y1="15" x2="13" y2="17" />
-    <line x1="9" y1="11" x2="7" y2="11" />
-    <line x1="9" y1="13" x2="7" y2="13" />
-    <line x1="15" y1="11" x2="17" y2="11" />
-    <line x1="15" y1="13" x2="17" y2="13" />
+
+    <rect x="282" y="280" width="270" height="268" rx="22" ry="22" />
+    <rect x="338" y="337" width="160" height="158" rx="6" ry="6" />
+
+    <line x1="330" y1="234" x2="330" y2="280" />
+    <line x1="389" y1="234" x2="389" y2="280" />
+    <line x1="447" y1="234" x2="447" y2="280" />
+    <line x1="505" y1="234" x2="505" y2="280" />
+
+    <line x1="330" y1="548" x2="330" y2="594" />
+    <line x1="389" y1="548" x2="389" y2="594" />
+    <line x1="447" y1="548" x2="447" y2="594" />
+    <line x1="505" y1="548" x2="505" y2="594" />
+
+    <line x1="234" y1="330" x2="282" y2="330" />
+    <line x1="234" y1="387" x2="282" y2="387" />
+    <line x1="234" y1="443" x2="282" y2="443" />
+    <line x1="234" y1="500" x2="282" y2="500" />
+
+    <line x1="552" y1="330" x2="600" y2="330" />
+    <line x1="552" y1="387" x2="600" y2="387" />
+    <line x1="552" y1="443" x2="600" y2="443" />
+    <line x1="552" y1="500" x2="600" y2="500" />
   </g>
 </svg>

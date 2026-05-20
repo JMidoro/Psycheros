@@ -4,6 +4,14 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Multi-line blockquotes (consecutive `>` lines without blank lines between
+  them) now preserve line breaks instead of collapsing into a single line. Both
+  server-side and client-side `marked` now use `breaks: true`.
+
 ## [0.3.3] - 2026-05-19
 
 ### Added
@@ -25,10 +33,25 @@ follows [Semantic Versioning](https://semver.org/).
 - Channel auto-scroll restored after clearing Discord context.
 - Entity-core MCP subprocess argv is built as a proper array instead of a
   space-joined string (fixes paths with spaces on Windows).
+- Entity now knows its own Discord user ID and mention tag in channel context,
+  so it can recognize when it's been pinged.
+- Discord Hub channel picker no longer gets stuck on "Loading servers…" after
+  navigating back from a channel view.
+- Discord Hub channel picker shows a retry link after 10 seconds if servers
+  haven't loaded.
+- **Discord Hub sidebar toggle.** New "Show Discord Hub in Sidebar" toggle in
+  Settings > External Connections > Discord (Connection section). Controls
+  whether the Discord Hub entry appears in the Conversations sidebar. Defaults
+  to on for existing installs. Changes take effect immediately on save.
 
 ### Changed
 
 - Discord debounce default changed from 1s to 5s.
+- **Active mode tier overhaul.** Fast tier now uses per-message debounce with a
+  buffer-size limit (`fastBufferFlushSize`, default 10) instead of a periodic
+  digest timer — the entity participates more naturally in rapid-fire channels.
+  Medium tier retains its periodic digest for measured check-ins.
+  `fastDigestIntervalMs` removed from tier config.
 - Documentation refreshed for the new tool system, Discord features, and
   configuration options.
 

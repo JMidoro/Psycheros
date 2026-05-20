@@ -1,0 +1,17 @@
+{
+  "name": "@psycheros/launcher-v2-e2e",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "description": "End-to-end tests for the Psycheros launcher v2 — drives the real Tauri webview via tauri-plugin-webdriver.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "mocha 'specs/**/*.e2e.mjs'"
+  },
+  "devDependencies": {
+    "mocha": "^11.0.0",
+    "webdriverio": "^9.5.0"
+  }
+}

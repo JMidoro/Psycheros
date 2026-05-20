@@ -397,6 +397,7 @@ export class Server {
       enabled: false,
       gatewayEnabled: false,
       globalInstructions: "",
+      showHubInSidebar: true,
     };
     this.discordGatewayConfig = getDefaultDiscordGatewayConfig();
 
@@ -873,8 +874,13 @@ export class Server {
         ? `DM with ${context.senderUsername}`
         : `#${context.channelName}` +
           (context.serverName ? ` in the ${context.serverName} server` : "");
+      const botId = this.discordGatewayClient?.getBotUserId();
+      const botName = this.discordGatewayClient?.getBotUsername();
+      const identity = botId
+        ? ` My Discord identity is <@${botId}> (${botName ?? "unknown"}).`
+        : "";
       const header =
-        `[System Message: The following messages are piped in from a connected Discord channel (${location}). Each message shows the author, mention ID, timestamp, and message ID.]\n\n`;
+        `[System Message: The following messages are piped in from a connected Discord channel (${location}). Each message shows the author, mention ID, timestamp, and message ID.${identity}]\n\n`;
       const contextualizedMessage = header + userMessage;
 
       for await (
@@ -1192,8 +1198,35 @@ export class Server {
       });
 
       this.scheduler.register("mcp.pull-canonical-identity", async () => {
-        await mcp.pull();
-        return { status: "success", result: "Pulled canonical identity" };
+        // Skip-on-disconnect rather than fail-on-disconnect. The MCP
+        // client owns reconnection; the 5-min tick handles recovery.
+        // Failing the job here turns transient transport drops into
+        // stderr noise + retry pressure with no benefit.
+        if (!mcp.isConnected()) {
+          return {
+            status: "skipped",
+            result: "MCP transport not connected; next tick will retry",
+          };
+        }
+        try {
+          await mcp.pull();
+          return { status: "success", result: "Pulled canonical identity" };
+        } catch (err) {
+          // If the transport dropped between our isConnected() check
+          // and callTool returning, the client's onclose handler has
+          // already cleared `this.client` — so isConnected() now reads
+          // false. Use that to detect the race instead of string-
+          // matching SDK error messages, which would silently regress
+          // if the SDK changed its wording.
+          if (!mcp.isConnected()) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              status: "skipped",
+              result: `MCP transport dropped mid-pull: ${msg}`,
+            };
+          }
+          throw err;
+        }
       });
       this.scheduler.defineSchedule({
         id: "mcp-pull-canonical-identity",
@@ -1400,19 +1433,42 @@ export class Server {
       );
     });
 
-    await Deno.serve(
-      {
-        port,
-        hostname,
-        signal: this.abortController.signal,
-        onListen: ({ hostname, port }) => {
-          console.log(
-            `Psycheros server listening on http://${hostname}:${port}`,
+    // Bind with retry to ride out the launchd KeepAlive restart race
+    // where the previous instance hasn't fully released the port yet.
+    // 5×500ms = 2.5s covers the macOS TIME_WAIT gap in practice; if we
+    // still can't bind after that, something other than our prior self
+    // is holding the port and the AddrInUse propagates cleanly.
+    const maxBindAttempts = 5;
+    const bindRetryDelayMs = 500;
+    for (let attempt = 1; attempt <= maxBindAttempts; attempt++) {
+      try {
+        await Deno.serve(
+          {
+            port,
+            hostname,
+            signal: this.abortController.signal,
+            onListen: ({ hostname, port }) => {
+              console.log(
+                `Psycheros server listening on http://${hostname}:${port}`,
+              );
+            },
+          },
+          (request) => this.handleRequest(request),
+        ).finished;
+        return;
+      } catch (err) {
+        if (
+          err instanceof Deno.errors.AddrInUse && attempt < maxBindAttempts
+        ) {
+          console.error(
+            `[Server] Port ${port} busy (attempt ${attempt}/${maxBindAttempts}), retrying in ${bindRetryDelayMs}ms — likely a previous instance still releasing.`,
           );
-        },
-      },
-      (request) => this.handleRequest(request),
-    ).finished;
+          await new Promise((r) => setTimeout(r, bindRetryDelayMs));
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   /**

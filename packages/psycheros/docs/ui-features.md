@@ -258,13 +258,14 @@ Implemented in `web/js/psycheros.js` and `src/server/state-changes.ts`.
 Both user and assistant messages render markdown formatting with progressive
 streaming.
 
-- **Server-side**: `renderMarkdown()` in `src/server/markdown.ts` uses
-  `marked` + `DOMPurify`. Strips LLM XML artifacts (`<t>` timestamp tags,
-  non-HTML XML wrappers) before rendering.
+- **Server-side**: `renderMarkdown()` in `src/server/markdown.ts` uses `marked`
+  (`breaks: true`, `gfm: true`) + `DOMPurify`. Strips LLM XML artifacts (`<t>`
+  timestamp tags, non-HTML XML wrappers) before rendering.
 - **Client-side streaming**: Progressive markdown rendering — content is parsed
-  and rendered live during streaming via debounced `marked.parse()` (40ms). A
-  blinking block cursor (▌) appears inline during generation. Each content
-  segment between tool calls is independently rendered.
+  and rendered live during streaming via debounced `marked.parse()` (40ms, same
+  `breaks: true` + `gfm: true` config as server). A blinking block cursor (▌)
+  appears inline during generation. Each content segment between tool calls is
+  independently rendered.
 - **Client-side completion**: On `done` event, final render applied, cursor
   removed, thinking/tool sections collapsed.
 - **XML stripping**: `stripEntityXml()` removes `<t>timestamp</t>` tags

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 836 836">
+  <g
+    fill="none"
+    stroke="black"
+    stroke-width="48"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    stroke-miterlimit="1"
+  >
+    <!-- Heart silhouette. Stroke is thicker than the brand SVG (28 → 48) so the
+         shape stays readable at menu-bar render size (22-44px tall). macOS
+         tints template images black-on-light / white-on-dark via the alpha
+         channel; the actual color here doesn't matter, only the silhouette. -->
+    <path
+      stroke-linejoin="miter"
+      stroke-miterlimit="20"
+      d="M 232,76
+             C 116,76 19,178 19,300
+             C 3,460 200,560 418,810
+             C 636,560 833,460 817,300
+             C 817,178 720,76 604,76
+             C 528,76 452,130 418,179
+             C 384,130 308,76 232,76 Z"
+    />
+
+    <!-- Chip outer body -->
+    <rect x="282" y="280" width="270" height="268" rx="22" ry="22" />
+
+    <!-- Chip inner square -->
+    <rect x="338" y="337" width="160" height="158" rx="6" ry="6" />
+
+    <!-- Top pins -->
+    <line x1="330" y1="234" x2="330" y2="280" />
+    <line x1="389" y1="234" x2="389" y2="280" />
+    <line x1="447" y1="234" x2="447" y2="280" />
+    <line x1="505" y1="234" x2="505" y2="280" />
+
+    <!-- Bottom pins -->
+    <line x1="330" y1="548" x2="330" y2="594" />
+    <line x1="389" y1="548" x2="389" y2="594" />
+    <line x1="447" y1="548" x2="447" y2="594" />
+    <line x1="505" y1="548" x2="505" y2="594" />
+
+    <!-- Left pins -->
+    <line x1="234" y1="330" x2="282" y2="330" />
+    <line x1="234" y1="387" x2="282" y2="387" />
+    <line x1="234" y1="443" x2="282" y2="443" />
+    <line x1="234" y1="500" x2="282" y2="500" />
+
+    <!-- Right pins -->
+    <line x1="552" y1="330" x2="600" y2="330" />
+    <line x1="552" y1="387" x2="600" y2="387" />
+    <line x1="552" y1="443" x2="600" y2="443" />
+    <line x1="552" y1="500" x2="600" y2="500" />
+  </g>
+</svg>

@@ -43,40 +43,107 @@ install over the top.
 
 ## Installing (end users)
 
-Pre-built artifacts will be published to GitHub Releases. Macros:
+Pre-built artifacts will be published to GitHub Releases:
 
-- macOS: download `Psycheros.dmg`, drag to `/Applications/`, right-click → Open
-  the first time to bypass Gatekeeper (this app is not currently code-signed —
-  see [`docs/release.md`](docs/release.md) for context).
-- Windows: download `Psycheros-setup.msi`, run, click through SmartScreen's
-  "More info → Run anyway."
-- Linux: download `Psycheros.AppImage` or `.deb`. Linux users will need
+- **macOS:** download `Psycheros.dmg`, drag to `/Applications/`. **See "First
+  launch on macOS" below before opening it** — Psycheros is not code-signed and
+  Gatekeeper will block a normal double-click.
+- **Windows:** download `Psycheros-setup.msi`, run, click through SmartScreen's
+  "More info → Run anyway." Psycheros is not signed for Authenticode; the
+  warning is expected.
+- **Linux:** download `Psycheros.AppImage` or `.deb`. Linux users will need
   `sudo loginctl enable-linger $USER` once for daemons to survive logout
   (one-time, no other escalation in the flow).
 
-## Building from source (devs)
+### First launch on macOS
 
-See [`CLAUDE.md`](CLAUDE.md) for the agent-style overview, then:
+Psycheros ships **unsigned**. macOS Gatekeeper blocks downloaded apps unless
+they've been signed and notarized by Apple, which costs $99/year — a cost I'm
+not passing on to users. The workaround is one extra step on the very first
+launch, and only the first launch.
+
+**Easy path (right-click):**
+
+1. After dragging `Psycheros.app` into `/Applications/`, **right-click** (or
+   `Control`-click) the app icon.
+2. Choose **Open** from the context menu.
+3. macOS shows a dialog: _"Psycheros" can't be opened because Apple cannot check
+   it for malicious software._ Click **Open** anyway.
+4. The app launches. macOS remembers your approval — every subsequent launch is
+   a normal double-click.
+
+> If you only see **Move to Trash** and no Open option in step 3, your Mac is on
+> the strictest Gatekeeper setting. Either lower it under **System Settings →
+> Privacy & Security → Security**, or use the terminal path below.
+
+**Terminal path (one command):**
 
 ```bash
-cd packages/launcher-v2
-./scripts/setup.sh                        # one-time: stage Deno + icons
-npx --yes @tauri-apps/cli@^2.0 dev
+xattr -dr com.apple.quarantine /Applications/Psycheros.app
 ```
 
-Requires Rust 1.77+ and Deno 2.x on PATH. The dev setup uses your local Deno as
-the sidecar; production builds bundle their own.
+This strips the `com.apple.quarantine` attribute macOS attaches to downloaded
+files. After running it, Psycheros opens with a normal double-click and the
+Gatekeeper dialog never appears. Equivalent to the right-click path; pick
+whichever you prefer.
+
+**Why this is expected, not broken:** I haven't paid Apple's Developer ID fee
+for v1. The first launch — and only the first — needs the manual confirmation
+above. If you'd rather trust an automated installer pipeline more than a single
+right-click, this app isn't for you yet; revisit when a signed v2 ships (if it
+ever does — see [`docs/release.md`](docs/release.md) for the signing posture).
+
+### Coming from launcher-v1?
+
+If you've been running the v1 launcher (a `~/psycheros` clone with state in
+`packages/psycheros/.psycheros/`, `identity/`, etc.) and you want to bring your
+existing entity over, **export from v1 BEFORE installing v2**:
+
+1. In v1's chat UI, **Settings → Admin → Entity Data → Export** — save the
+   `.zip`.
+2. Install v2 per the steps above (including the Gatekeeper right-click).
+3. Complete v2's welcome wizard and click "Install autostart" — a fresh empty
+   entity comes up.
+4. In v2's chat UI, **Settings → Admin → Entity Data → Import** — select the
+   `.zip` from step 1. The daemon restarts and your migrated entity takes over.
+
+Full procedure + caveats in [`docs/migration.md`](docs/migration.md).
+
+## Troubleshooting
+
+The launcher carries its own support surface inside the app:
+
+- **Manager footer → Diagnostics** — versions, paths, daemon state, log tail.
+  Most issues are diagnosable from this card alone. Use the `Reveal` buttons
+  next to paths to open them in Finder when you need to inspect files directly.
+- **Manager footer → Data** — back up, restore, wipe, re-init. Routine recovery
+  operations live here.
+- **`docs/runbook.md`** — symptom → recovery mapping. Covers the common failure
+  modes (port held by another process, MCP down, bootstrap fails with "git not
+  found", etc.) with the exact buttons to click.
+
+If the launcher itself won't start, check the Console.app system log for
+`ai.psycheros.launcher` entries.
+
+## Contributing
+
+Dev setup, build commands, and agent context live in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The load-bearing wirings + traps that bite
+are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Documentation
 
-| Topic                        | Doc                                          |
-| ---------------------------- | -------------------------------------------- |
-| Architectural design         | [docs/architecture.md](docs/architecture.md) |
-| Per-OS service supervisors   | [docs/supervisors.md](docs/supervisors.md)   |
-| Release bundle composition   | [docs/bundle.md](docs/bundle.md)             |
-| Frontend conventions / brand | [docs/frontend.md](docs/frontend.md)         |
-| Release pipeline + signing   | [docs/release.md](docs/release.md)           |
-| v1 → v2 migration            | [docs/migration.md](docs/migration.md)       |
+User-facing:
 
-For contributors, the load-bearing wirings + traps that bite live in
-[`CLAUDE.md`](CLAUDE.md).
+- [docs/runbook.md](docs/runbook.md) — symptom → recovery
+
+Architecture + internals:
+
+- [docs/architecture.md](docs/architecture.md)
+- [docs/supervisors.md](docs/supervisors.md)
+- [docs/source-provisioning.md](docs/source-provisioning.md)
+- [docs/frontend.md](docs/frontend.md)
+- [docs/release.md](docs/release.md)
+- [docs/migration.md](docs/migration.md)
+- [docs/v1-roadmap.md](docs/v1-roadmap.md) — historical context for the body of
+  work that brought the launcher to its current state.

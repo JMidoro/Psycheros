@@ -1,6 +1,6 @@
 [package]
 name = "psycheros-launcher"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "Psycheros desktop launcher — Tauri app + OS-supervised daemon"
 license = "MIT"
@@ -20,11 +20,16 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 # Tauri-plugin-updater wires up signed in-app updates of the shell binary.
 # Source-bundle updates are a separate channel — see docs/release.md.
 tauri-plugin-updater = "2"
+# Tauri-plugin-dialog gives us the OS-native file picker for the
+# data-management card's Restore action. The picker returns absolute
+# paths the Rust side can read directly — avoiding the 8x bloat of
+# passing 100MB+ zips through the JSON-serialized IPC layer.
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cross-platform path resolution (data_dir, cache_dir, etc.) so the launcher
@@ -33,6 +38,22 @@ dirs = "5"
 # Structured errors at module boundaries — far better DX than stringly-typed
 # Result<T, String> when something goes wrong in the supervisor.
 thiserror = "1"
+# Semver parsing for the tagged-release update model. Tags on the public
+# Psycheros repo are `psycheros-v<semver>`; the launcher picks the highest
+# semver after the prefix strip — naive string sort would break on
+# `v0.10.0 < v0.2.0`. See bundle::query_latest_tag.
+semver = "1"
+
+# WebDriver plugin — only pulled in when the `webdriver` feature is
+# enabled (CI E2E + local debugging). Exposes a W3C WebDriver server
+# on 127.0.0.1:4445 that wdio (or selenium) clients connect to. Never
+# included in release builds — the feature flag stays off unless a
+# dev / CI workflow opts in explicitly. See `e2e/README.md`.
+tauri-plugin-webdriver = { version = "0.2", optional = true }
+
+[dev-dependencies]
+# Hermetic temp dirs for bundle-module unit tests (clone/stage/warm).
+tempfile = "3"
 
 [features]
 default = []
@@ -44,3 +65,8 @@ launchd = []
 systemd-user = []
 # Windows Task Scheduler supervisor.
 task-scheduler = []
+# WebDriver test harness. Opt-in for E2E builds only — registers a
+# WebDriver server on 127.0.0.1:4445 so wdio/selenium can drive the
+# launcher's webview. Release builds NEVER set this; CI sets it
+# explicitly with `cargo build --features webdriver`.
+webdriver = ["dep:tauri-plugin-webdriver"]

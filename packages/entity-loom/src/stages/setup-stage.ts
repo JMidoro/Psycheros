@@ -5,7 +5,7 @@
  * test LLM connection, list packages for resume.
  */
 
-import { basename, join } from "@std/path";
+import { basename, join, resolve } from "@std/path";
 import type { Handler } from "../server/server.ts";
 import type {
   CheckpointStateV2,
@@ -319,11 +319,15 @@ export function setupRoutes(): Array<
           return json({ error: "packageDir is required" }, 400);
         }
 
-        // Validate path is inside OUTPUT_DIR to prevent traversal
-        const resolved =
-          new URL(body.packageDir, `file://${Deno.cwd()}/`).pathname;
-        const outputResolved =
-          new URL(OUTPUT_DIR, `file://${Deno.cwd()}/`).pathname;
+        // Validate path is inside OUTPUT_DIR to prevent traversal.
+        // `@std/path`'s `resolve` normalizes `..` segments the same
+        // way the previous URL-based approach did but without the
+        // file:// template-literal trap: building a URL via
+        // `\`file://${Deno.cwd()}/\`` truncates at the first space in
+        // cwd (e.g. macOS's `~/Library/Application Support/...`),
+        // matching the bug fixed in custom-loader.ts.
+        const resolved = resolve(body.packageDir);
+        const outputResolved = resolve(OUTPUT_DIR);
         if (!resolved.startsWith(outputResolved + "/")) {
           return json({ error: "Invalid package directory" }, 400);
         }

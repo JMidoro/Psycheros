@@ -19,7 +19,6 @@ Rust internals.
 npx --yes @tauri-apps/cli@^2.0 dev        # or cargo install tauri-cli && cargo tauri dev
 
 # Build a distributable (.app / .msi / .deb / .AppImage):
-./scripts/bundle-source.sh                # produce release-bundle.tar.gz
 npx --yes @tauri-apps/cli@^2.0 build
 
 # Rust gates:
@@ -27,6 +26,10 @@ cd src-tauri && cargo check
 cd src-tauri && cargo fmt --check
 cd src-tauri && cargo clippy -- -D warnings
 ```
+
+Psycheros source is NOT embedded in the launcher binary — it gets cloned at
+first-run from the public repo at the latest `psycheros-v*` tag. See
+[`docs/source-provisioning.md`](docs/source-provisioning.md).
 
 This package is **not in the Deno workspace** — it's Rust + plain HTML/JS/CSS.
 The root `deno.json` workspace list intentionally omits it.
@@ -61,22 +64,35 @@ paths.rs                  Per-OS path resolution (app data, source, deno, logs)
 
 supervisor/
   mod.rs                  ServiceSupervisor trait + DaemonConfig + DefaultSupervisor alias
-  launchd.rs              macOS: ~/Library/LaunchAgents/<label>.plist (full impl)
-  systemd.rs              Linux: ~/.config/systemd/user/*.service (stub)
-  task_scheduler.rs       Windows: schtasks (stub)
+  launchd.rs              macOS: dual plist (autostart/manual) + start/stop/restart
+  systemd.rs              Linux: stub
+  task_scheduler.rs       Windows: stub
 
 daemon/
-  mod.rs                  Public surface — DAEMON_PORT const, re-exports
-  status.rs               DaemonState enum + probe() — TCP + supervisor check
+  mod.rs                  Public surface — DAEMON_PORT fallback const, re-exports
+  status.rs               DaemonState enum (NotInstalled / Stopped / Installed /
+                          Running) + probe() — file + supervisor + HTTP /health
+                          identity check (rejects non-Psycheros port owners)
   navigation.rs           webview.eval-based navigation driven by Rust
 
 app/
-  mod.rs                  Watcher thread + menu event handler
+  mod.rs                  spawn_status_watcher (2s poll, emits daemon-status-changed)
   state.rs                AppState (user_summoned, splash_url, last_navigated)
   menu.rs                 Native menu (Preferences = Cmd+,)
+  tray.rs                 macOS menu-bar tray icon + state-aware context menu
+                          (Start/Stop/View logs/Open manager/Quit), template
+                          image so it auto-tints to menu-bar theme
+  update_watcher.rs       3h poll of upstream tags; emits update-available;
+                          injects in-window toast on rising-edge transitions
+  log_tailer.rs           1.5s poll of daemon stderr; emits daemon-log-line for
+                          the manager's live log panel
 
-bundle/                   Release-bundle extraction + Deno staging (phase 2 stubs)
-config/                   config.json read/write (phase 2 stubs)
+bundle/                   Source provisioning — clone_or_fetch_source,
+                          query_latest_tag (semver), stage_bundled_deno,
+                          warm_deno_cache. See docs/source-provisioning.md.
+config/                   LauncherConfig + DaemonMode + load/save
+http.rs                   Minimal hand-rolled HTTP/1.1 client for the localhost
+                          backup/restore endpoints (no reqwest/tokio overhead)
 
 commands.rs               #[tauri::command] surface — JS RPC entry points
 ```
@@ -86,6 +102,30 @@ The frontend (`frontend/`) is plain HTML/CSS/JS — no bundler. Tauri's
 `invoke()` Rust commands and `listen()` for events without a build step. The
 split is intentional: keep the build surface small until product needs demand
 otherwise.
+
+## State machine: daemon state
+
+`daemon::probe()` combines three signals — plist file exists (`is_installed`),
+service loaded in launchctl (`is_loaded`), and TCP port bound — into a single
+`DaemonState`:
+
+| installed | loaded | port | state          | manager card shows                       |
+| --------- | ------ | ---- | -------------- | ---------------------------------------- |
+| no        | no     | no   | `NotInstalled` | Install autostart \| Install manual      |
+| yes       | no     | no   | `Stopped`      | Start daemon \| Uninstall                |
+| yes       | yes    | no   | `Installed`    | (transient — booting or crashlooping)    |
+| _         | _      | yes  | `Running`      | Back to chat \| Stop daemon \| Uninstall |
+
+`Stopped` is distinct from `NotInstalled`: the user clicked Stop, but the
+service definition is still on disk. At next login (autostart) or next manual
+Start (either mode) the daemon comes back. Port-bound implies `Running`
+regardless of supervisor state, so users who run `deno task start` from a
+terminal still get a working chat UI.
+
+Daemon mode (`DaemonMode::Autostart | Manual`) lives in `config.daemon_mode` and
+affects the plist content (`RunAtLoad`/`KeepAlive`) at install time, plus
+mode-aware copy in the manager card. `Stop` is universal — for autostart it's a
+session-scoped unload (daemon back at next login); for manual it stays stopped.
 
 ## State machine: view mode
 
@@ -125,7 +165,21 @@ instead of a frozen chat window.
   is meant for humans.
 - **`KeepAlive=true` makes "Stop" useless.** `launchctl stop` is a no-op against
   KeepAlive — the daemon comes right back. The only real off switch is
-  `launchctl unload -w` (which we wrap as "Uninstall autostart").
+  `launchctl unload` (session-scoped, used by Stop) or `launchctl unload -w`
+  (persistent, used by Uninstall).
+- **`window.confirm` / `window.alert` are silently blocked in Tauri 2 webviews**
+  — they return `undefined`. Don't use them. The launcher has a themed in-app
+  modal (`#confirm-modal`) wired via `confirmDialog()` in
+  `frontend/js/manager.js`.
+- **`git reset --hard origin/<branch>` breaks for tags.** Tags don't always get
+  a remote-tracking ref. Use `FETCH_HEAD` instead — works for both branches and
+  tags, and peels annotated tags to their commit automatically. See
+  `bundle::clone_or_fetch_source`.
+- **`--progress` flag is rejected by `git reset`** (exit 129). Only pass it to
+  commands that accept it (`clone`, `fetch`); don't blanket-append.
+- **Annotated tag SHA ≠ commit SHA.** `query_latest_tag` returns the tag name
+  (e.g. `psycheros-v0.3.3`) which is the stable identifier; the actual SHA is
+  exposed only for diagnostics.
 
 ## Cross-platform considerations
 
@@ -141,20 +195,24 @@ the under-the-hood mechanics differ — see per-OS module doc comments and
 
 ## Deep references
 
-| Topic                                         | Doc                                          |
-| --------------------------------------------- | -------------------------------------------- |
-| Overall architecture, daemon ownership model  | [docs/architecture.md](docs/architecture.md) |
-| Per-OS service supervisor design + impl notes | [docs/supervisors.md](docs/supervisors.md)   |
-| Release-bundle composition + extraction flow  | [docs/bundle.md](docs/bundle.md)             |
-| Frontend conventions, view modes, brand       | [docs/frontend.md](docs/frontend.md)         |
-| CI matrix, signing posture, distribution      | [docs/release.md](docs/release.md)           |
-| v1 → v2 migration story                       | [docs/migration.md](docs/migration.md)       |
+| Topic                                         | Doc                                                        |
+| --------------------------------------------- | ---------------------------------------------------------- |
+| Overall architecture, daemon ownership model  | [docs/architecture.md](docs/architecture.md)               |
+| Per-OS service supervisor design + impl notes | [docs/supervisors.md](docs/supervisors.md)                 |
+| Source provisioning + bundle composition      | [docs/source-provisioning.md](docs/source-provisioning.md) |
+| Frontend conventions, view modes, brand       | [docs/frontend.md](docs/frontend.md)                       |
+| CI matrix, signing posture, distribution      | [docs/release.md](docs/release.md)                         |
+| v1 → v2 migration story                       | [docs/migration.md](docs/migration.md)                     |
+| Operations runbook (symptom → recovery)       | [docs/runbook.md](docs/runbook.md)                         |
+| v1.0 roadmap (historical, shipped)            | [docs/v1-roadmap.md](docs/v1-roadmap.md)                   |
+| Dev setup + build commands                    | [CONTRIBUTING.md](CONTRIBUTING.md)                         |
 
 ## Companion packages
 
 This package lives in the [Psycheros monorepo](../../README.md). It manages the
-lifecycle of the sibling [`psycheros`](../psycheros/) daemon and ships a pruned
-bundle of its source plus [`entity-core`](../entity-core/). It does not manage
+lifecycle of the sibling [`psycheros`](../psycheros/) daemon. Psycheros source
+is NOT bundled into the launcher binary — it gets cloned at first run from the
+public mirror at the latest `psycheros-v*` tag. It does not manage
 [`entity-loom`](../entity-loom/) — Loom is a separate utility with its own
 distribution story.
 

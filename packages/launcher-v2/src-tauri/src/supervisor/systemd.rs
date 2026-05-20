@@ -43,11 +43,19 @@ use std::path::PathBuf;
 
 use super::{DaemonConfig, ServiceSupervisor, SupervisorError};
 
+/// Linux supervisor stub backed by systemd user units. Every mutating
+/// method returns [`SupervisorError::NotImplemented`] until the unit-file
+/// generator and `systemctl --user` integration land — see
+/// [`docs/supervisors.md`](../../docs/supervisors.md) for the planned
+/// shape.
 pub struct SystemdUserSupervisor {
     label: String,
 }
 
 impl SystemdUserSupervisor {
+    /// Construct a supervisor bound to the canonical `psycheros.service`
+    /// unit name. Stub today; the label is the only piece of state the
+    /// final impl will need.
     pub fn new() -> Self {
         Self {
             label: "psycheros.service".to_string(),
@@ -62,7 +70,11 @@ impl Default for SystemdUserSupervisor {
 }
 
 impl ServiceSupervisor for SystemdUserSupervisor {
-    fn install(&self, _cfg: &DaemonConfig) -> Result<(), SupervisorError> {
+    fn install_autostart(&self, _cfg: &DaemonConfig) -> Result<(), SupervisorError> {
+        Err(SupervisorError::NotImplemented)
+    }
+
+    fn install_manual(&self, _cfg: &DaemonConfig) -> Result<(), SupervisorError> {
         Err(SupervisorError::NotImplemented)
     }
 
@@ -70,8 +82,24 @@ impl ServiceSupervisor for SystemdUserSupervisor {
         Err(SupervisorError::NotImplemented)
     }
 
+    fn is_installed(&self) -> bool {
+        false
+    }
+
     fn is_loaded(&self) -> bool {
         false
+    }
+
+    fn start_daemon(&self) -> Result<(), SupervisorError> {
+        Err(SupervisorError::NotImplemented)
+    }
+
+    fn stop_daemon(&self) -> Result<(), SupervisorError> {
+        Err(SupervisorError::NotImplemented)
+    }
+
+    fn restart(&self) -> Result<(), SupervisorError> {
+        Err(SupervisorError::NotImplemented)
     }
 
     fn log_paths(&self) -> Vec<PathBuf> {

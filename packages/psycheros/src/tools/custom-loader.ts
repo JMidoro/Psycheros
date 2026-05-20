@@ -6,7 +6,7 @@
  */
 
 import type { Tool } from "./types.ts";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 
 /**
  * Load custom tools from the `custom-tools/` directory at project root.
@@ -39,7 +39,10 @@ export async function loadCustomTools(
     const filePath = join(customDir, entry.name);
 
     try {
-      const module = await import(`file://${filePath}`);
+      // toFileUrl URL-encodes path segments (notably spaces, which appear
+      // in `~/Library/Application Support/...` on macOS). Hand-rolling
+      // `` `file://${filePath}` `` truncates the URL at the first space.
+      const module = await import(toFileUrl(filePath).href);
       const tool = module.default as Tool | undefined;
 
       if (!tool || typeof tool !== "object") {

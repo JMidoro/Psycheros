@@ -45,69 +45,44 @@ chmod +x "$DEST"
 echo "sidecar: $DENO_BIN -> $DEST"
 
 # ----------------------------------------------------------------------------
-# Placeholder icons
+# Icons
 # ----------------------------------------------------------------------------
-# Tauri's `generate_context!` macro validates icons at compile time and
-# rejects anything that isn't RGBA. We generate solid-color RGBA PNGs as
-# placeholders; replace with a real brand asset before any public release.
-# See docs/release.md.
+# Real brand-asset icons (heart-chip with the cyan→purple gradient) are
+# committed under src-tauri/icons/. If they're missing — typically because
+# someone wiped the dir — regenerate them from the canonical SVG. See
+# src-tauri/icons/README.md for the full regeneration recipe; this block
+# just runs the same recipe automatically as a setup-time safety net.
 ICON_DIR="src-tauri/icons"
+CANONICAL_SVG="../../site/src/assets/psycheros-logo.svg"
+
 mkdir -p "$ICON_DIR"
 
-SOURCE_PNG="$ICON_DIR/source.png"
-if [[ ! -f "$SOURCE_PNG" ]]; then
-  python3 - "$SOURCE_PNG" <<'PY'
-import struct, sys, zlib
-path = sys.argv[1]
-W = H = 512
-rgba = (30, 18, 48, 255)  # deep violet, matches brand
-def chunk(t, d):
-    crc = zlib.crc32(t + d) & 0xffffffff
-    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", crc)
-sig = b"\x89PNG\r\n\x1a\n"
-ihdr = struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0)  # color type 6 = RGBA
-row = b"\x00" + bytes(rgba) * W
-raw = row * H
-idat = zlib.compress(raw, 9)
-with open(path, "wb") as f:
-    f.write(sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
-PY
-fi
-
-if [[ "$(uname -s)" == "Darwin" ]] && command -v sips >/dev/null 2>&1; then
-  sips -z 32  32  "$SOURCE_PNG" --out "$ICON_DIR/32x32.png"      >/dev/null
-  sips -z 128 128 "$SOURCE_PNG" --out "$ICON_DIR/128x128.png"    >/dev/null
-  sips -z 256 256 "$SOURCE_PNG" --out "$ICON_DIR/128x128@2x.png" >/dev/null
+if [[ ! -f "$ICON_DIR/icon.icns" || ! -f "$ICON_DIR/icon.ico" || \
+      ! -f "$ICON_DIR/32x32.png" || ! -f "$ICON_DIR/128x128.png" || \
+      ! -f "$ICON_DIR/128x128@2x.png" ]]; then
+  echo "icons: missing — regenerating from $CANONICAL_SVG"
+  if [[ "$(uname -s)" != "Darwin" ]] || ! command -v sips >/dev/null 2>&1; then
+    echo "  cannot regenerate without sips (macOS-only); commit a real" >&2
+    echo "  src-tauri/icons/icon.png and re-run on macOS." >&2
+    exit 1
+  fi
+  if [[ ! -f "$CANONICAL_SVG" ]]; then
+    echo "  canonical SVG not found at $CANONICAL_SVG" >&2
+    exit 1
+  fi
+  sips -s format png --resampleHeightWidth 1024 1024 "$CANONICAL_SVG" \
+    --out "$ICON_DIR/icon.png" >/dev/null
+  npx --yes @tauri-apps/cli@^2.0 icon "$ICON_DIR/icon.png" \
+    --output "$ICON_DIR/" >/dev/null
+  echo "icons: regenerated in $ICON_DIR"
 else
-  # No sips — just copy the source. Cosmetically wrong but Tauri will accept.
-  cp "$SOURCE_PNG" "$ICON_DIR/32x32.png"
-  cp "$SOURCE_PNG" "$ICON_DIR/128x128.png"
-  cp "$SOURCE_PNG" "$ICON_DIR/128x128@2x.png"
+  echo "icons: present in $ICON_DIR"
 fi
-# .icns / .ico needed for `cargo tauri build` bundling; not for `tauri dev`.
-# Generate via `cargo tauri icon path/to/real.png` when a real asset exists.
 
-echo "icons: placeholders generated in $ICON_DIR"
-
-# ----------------------------------------------------------------------------
-# Placeholder release-bundle.tar.gz
-# ----------------------------------------------------------------------------
-# Tauri resolves bundle.resources at compile time, so the file must exist
-# even for `cargo check`. CI runs `bundle-source.sh` to produce the real
-# bundle; dev cycle just needs a non-empty tarball. Preserves any existing
-# real bundle the dev has already staged.
-RESOURCE_DIR="src-tauri/resources"
-mkdir -p "$RESOURCE_DIR"
-if [[ ! -f "$RESOURCE_DIR/release-bundle.tar.gz" ]]; then
-  STUB_TMP=$(mktemp -d -t psy-bundle-stub-XXXXX)
-  echo "scaffold-only placeholder — run scripts/bundle-source.sh for the real bundle" \
-    > "$STUB_TMP/README.md"
-  tar -czf "$RESOURCE_DIR/release-bundle.tar.gz" -C "$STUB_TMP" .
-  rm -rf "$STUB_TMP"
-  echo "bundle: stub release-bundle.tar.gz staged"
-else
-  echo "bundle: existing release-bundle.tar.gz preserved"
-fi
+# Note: no release-bundle.tar.gz staging anymore. Source is fetched at
+# first-run via `git clone` from the public Psycheros repo (see
+# src-tauri/src/bundle/mod.rs::clone_or_fetch_source). The launcher
+# itself ships with no embedded source, only the bundled Deno sidecar.
 
 echo ""
 echo "Setup complete. Next:"

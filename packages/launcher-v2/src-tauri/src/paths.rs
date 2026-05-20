@@ -17,16 +17,46 @@
 //! - `logs/` — daemon stdout/stderr (launchd / Task Scheduler write here;
 //!   systemd uses the journal)
 //! - `cache/` — vec0 extension + any other regenerable caches (deferred
-//!   to a future psycheros refactor; see docs/bundle.md)
+//!   to a future psycheros refactor; see docs/source-provisioning.md)
 
 use std::path::PathBuf;
 
 const APP_DIR_NAME: &str = "Psycheros";
 
+/// Env var that overrides the launcher data dir. Tests set this to a
+/// tempdir so they don't touch the user's real `~/Library/Application
+/// Support/Psycheros/`. Production code leaves it unset and everything
+/// resolves via the OS-conventional path below.
+///
+/// macOS's `dirs::data_dir()` calls `NSSearchPathForDirectoriesInDomains`
+/// rather than honoring `$HOME`, so a `HOME=` redirect doesn't work for
+/// hermetic tests — the env override is what makes the whole `paths`
+/// module testable without per-test mocking.
+const LAUNCHER_DATA_DIR_ENV: &str = "PSYCHEROS_LAUNCHER_DATA_DIR";
+
+/// Env var that overrides the user's Downloads directory. Used by
+/// `backup_data` so tests can land the backup zip in a tempdir rather
+/// than the real `~/Downloads/`.
+pub const DOWNLOAD_DIR_ENV: &str = "PSYCHEROS_DOWNLOAD_DIR";
+
 /// The launcher's app-data root. Lazily created on first call.
 pub fn launcher_data_dir() -> PathBuf {
+    if let Ok(override_dir) = std::env::var(LAUNCHER_DATA_DIR_ENV) {
+        return PathBuf::from(override_dir);
+    }
     let base = dirs::data_dir().unwrap_or_else(|| dirs::home_dir().expect("HOME unresolvable"));
     base.join(APP_DIR_NAME)
+}
+
+/// Resolve the user's Downloads directory, honoring [`DOWNLOAD_DIR_ENV`]
+/// in test contexts. Returns `None` when neither the override nor the
+/// OS-conventional lookup yields a path — same fallback semantics as
+/// `dirs::download_dir()` alone.
+pub fn download_dir() -> Option<PathBuf> {
+    if let Ok(override_dir) = std::env::var(DOWNLOAD_DIR_ENV) {
+        return Some(PathBuf::from(override_dir));
+    }
+    dirs::download_dir()
 }
 
 /// Where `config.json` lives.

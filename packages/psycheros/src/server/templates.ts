@@ -351,8 +351,8 @@ export function renderAppShell(): string {
     fetch('/api/discord/status').then(r => r.json()).then(data => {
       const btn = document.getElementById('discord-sidebar-btn');
       if (!btn) return;
-      const show = data.enabled || data.gatewayEnabled;
-      btn.hidden = !show;
+      const show = (data.enabled || data.gatewayEnabled) && data.showHubInSidebar !== false;
+      btn.style.display = show ? '' : 'none';
       if (show) {
         const dot = document.getElementById('discord-status-dot');
         if (dot) dot.className = 'discord-status-dot ' + (data.connected ? 'discord-dot-connected' : 'discord-dot-disconnected');
@@ -366,6 +366,58 @@ export function renderAppShell(): string {
 }
 
 /**
+ * Render the canonical heart-chip brand mark as inline SVG. Inlined so
+ * the gradient stops can resolve `--c-logo-stop-{0..4}` from the host
+ * document's theme variables (an external `<img src=...svg>` can't).
+ *
+ * Two callers today (header at 32×32, empty-state hero at 120×120) — the
+ * gradientId must be unique per page render to avoid SVG `<defs>` ID
+ * collisions when both are present.
+ */
+function renderBrandMark(
+  gradientId: string,
+  size?: number,
+  ariaLabel?: string,
+): string {
+  const sizeAttrs = size ? ` width="${size}" height="${size}"` : "";
+  const a11y = ariaLabel
+    ? ` role="img" aria-label="${ariaLabel}"`
+    : ` aria-hidden="true"`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 836 836"${sizeAttrs}${a11y}>
+  <defs>
+    <linearGradient id="${gradientId}" x1="0" y1="0" x2="836" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="var(--c-logo-stop-0)"/>
+      <stop offset="25%" stop-color="var(--c-logo-stop-1)"/>
+      <stop offset="50%" stop-color="var(--c-logo-stop-2)"/>
+      <stop offset="75%" stop-color="var(--c-logo-stop-3)"/>
+      <stop offset="100%" stop-color="var(--c-logo-stop-4)"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#${gradientId})" stroke-width="28" stroke-linejoin="round" stroke-linecap="round" stroke-miterlimit="1">
+    <path stroke-linejoin="miter" stroke-miterlimit="20" d="M 232,76 C 116,76 19,178 19,300 C 3,460 200,560 418,810 C 636,560 833,460 817,300 C 817,178 720,76 604,76 C 528,76 452,130 418,179 C 384,130 308,76 232,76 Z"/>
+    <rect x="282" y="280" width="270" height="268" rx="22" ry="22"/>
+    <rect x="338" y="337" width="160" height="158" rx="6" ry="6"/>
+    <line x1="330" y1="234" x2="330" y2="280"/>
+    <line x1="389" y1="234" x2="389" y2="280"/>
+    <line x1="447" y1="234" x2="447" y2="280"/>
+    <line x1="505" y1="234" x2="505" y2="280"/>
+    <line x1="330" y1="548" x2="330" y2="594"/>
+    <line x1="389" y1="548" x2="389" y2="594"/>
+    <line x1="447" y1="548" x2="447" y2="594"/>
+    <line x1="505" y1="548" x2="505" y2="594"/>
+    <line x1="234" y1="330" x2="282" y2="330"/>
+    <line x1="234" y1="387" x2="282" y2="387"/>
+    <line x1="234" y1="443" x2="282" y2="443"/>
+    <line x1="234" y1="500" x2="282" y2="500"/>
+    <line x1="552" y1="330" x2="600" y2="330"/>
+    <line x1="552" y1="387" x2="600" y2="387"/>
+    <line x1="552" y1="443" x2="600" y2="443"/>
+    <line x1="552" y1="500" x2="600" y2="500"/>
+  </g>
+</svg>`;
+}
+
+/**
  * Render the header component.
  */
 export function renderHeader(): string {
@@ -373,7 +425,7 @@ export function renderHeader(): string {
   <div class="header-left">
     <button class="logo-btn" onclick="Psycheros.toggleSidebar()" aria-label="Toggle sidebar">
       <div class="logo-icon">
-        <img src="/psycheros_logo_invert.png" alt=""/>
+        ${renderBrandMark("logo-grad")}
       </div>
     </button>
     <span class="logo-sub" id="header-title"></span>
@@ -1310,7 +1362,7 @@ export function renderSidebar(conversations: Conversation[]): string {
     ${renderConversationList(conversations)}
   </nav>
   <div class="sidebar-footer">
-    <button class="sidebar-settings-link discord-nav-link" id="discord-sidebar-btn" hidden
+    <button class="sidebar-settings-link discord-nav-link" id="discord-sidebar-btn" style="display:none"
       hx-get="/fragments/discord"
       hx-target="#chat"
       hx-swap="innerHTML"
@@ -1774,7 +1826,7 @@ export function renderEmptyState(): string {
   return `<div class="messages" id="messages">
   <div class="empty-state" id="empty-state">
     <div class="empty-logo">
-      <img src="/psycheroslogo_lines_Color.png" alt="Psycheros" width="120" height="120"/>
+      ${renderBrandMark("empty-logo-grad", 120, "Psycheros")}
     </div>
     <div class="empty-title">Psycheros</div>
     <div class="empty-tagline">seize the means of companionship</div>
@@ -5128,6 +5180,15 @@ export function renderConnectionsDiscordSettings(
   }" placeholder="Paste your Discord bot token">
           <span class="field-hint">Create a bot at discord.com/developers/applications</span>
         </div>
+        <div class="llm-field">
+          <label class="toggle-label" for="discord-show-hub">
+            <span>Show Discord Hub in Sidebar</span>
+            <input type="checkbox" id="discord-show-hub" ${
+    settings.showHubInSidebar !== false ? "checked" : ""
+  }>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
     </section>
 
@@ -5449,6 +5510,7 @@ async function saveDiscordSettings(event) {
       defaultChannelId: document.getElementById('discord-channel-id')?.value.trim() || '',
       gatewayEnabled: document.getElementById('discord-gateway-enabled')?.checked ?? false,
       globalInstructions: document.getElementById('discord-global-instructions')?.value.trim() || '',
+      showHubInSidebar: document.getElementById('discord-show-hub')?.checked ?? true,
     };
 
     // Save gateway config if gateway fields are visible
@@ -5495,7 +5557,11 @@ async function saveDiscordSettings(event) {
       showDiscordStatus('success', 'Settings saved successfully.');
       // Update sidebar visibility
       const sidebarBtn = document.getElementById('discord-sidebar-btn');
-      if (sidebarBtn) sidebarBtn.hidden = false;
+      const showHub = document.getElementById('discord-show-hub')?.checked ?? true;
+      if (sidebarBtn) {
+        const show = (baseSettings.enabled || baseSettings.gatewayEnabled) && showHub;
+        sidebarBtn.style.display = show ? '' : 'none';
+      }
     } else {
       showDiscordStatus('error', 'Failed to save: ' + (data.error || 'Unknown error'));
     }
@@ -7536,7 +7602,14 @@ async function loadDiscordChannelPicker() {
   });
 
   try {
+    const loadingTimeout = setTimeout(() => {
+      if (document.getElementById('discord-channel-picker')?.querySelector('.settings-note')) {
+        picker.innerHTML = '<p class="settings-note" style="color:var(--c-muted);">Server list is taking longer than expected. <a href="javascript:void(0)" onclick="loadDiscordChannelPicker()">Retry</a></p>';
+      }
+    }, 10000);
+
     const resp = await fetch('/api/discord/status', { signal: _discordPickerAbort.signal });
+    clearTimeout(loadingTimeout);
     const data = await resp.json();
 
     if (!data.connected || !data.guilds || data.guilds.length === 0) {

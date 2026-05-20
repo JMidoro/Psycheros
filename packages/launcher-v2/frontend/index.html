@@ -112,6 +112,125 @@
         opacity: 0.4;
         cursor: not-allowed;
       }
+      /* Busy state — applied while an async click handler is running.
+         Solid bright accent fill makes the active button stand out
+         clearly against the now-disabled siblings. The card-level
+         action-progress banner (below) carries the louder "something's
+         happening" signal so this can stay tight. */
+      button.is-busy,
+      button.is-busy:disabled {
+        opacity: 1;
+        cursor: progress;
+        background: var(--c-accent) !important;
+        border-color: var(--c-accent-hover) !important;
+        color: var(--c-fg-strong) !important;
+      }
+      button.is-busy::after {
+        content: "";
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        margin-left: 10px;
+        vertical-align: -3px;
+        border: 2.5px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: psy-spin 0.6s linear infinite;
+      }
+      @keyframes psy-spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* Action progress banner — shown at the top of the manager card
+         while any button's click handler is in flight. Loud, central,
+         and impossible to miss even in peripheral vision: animated
+         accent-glow border + leading spinner + busy text. Hidden by
+         default; manager.js toggles it on/off around each action. */
+      .action-progress {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3);
+        padding: var(--sp-3) var(--sp-4);
+        margin-bottom: var(--sp-4);
+        background: var(--c-accent-subtle);
+        border: 1px solid var(--c-accent);
+        border-radius: 8px;
+        color: var(--c-fg-strong);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-medium);
+        box-shadow: 0 0 0 0 var(--c-accent-glow);
+        animation: psy-glow-pulse 1.6s ease-in-out infinite;
+      }
+      .action-progress[hidden] {
+        display: none;
+      }
+      .action-progress::before {
+        content: "";
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2.5px solid var(--c-accent);
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: psy-spin 0.6s linear infinite;
+        flex-shrink: 0;
+      }
+      @keyframes psy-glow-pulse {
+        0%, 100% {
+          box-shadow: 0 0 0 0 var(--c-accent-glow);
+        }
+        50% {
+          box-shadow: 0 0 0 4px var(--c-accent-glow);
+        }
+      }
+      /* Confirm modal — replaces native window.confirm (blocked in Tauri
+         webviews). Full-viewport backdrop + centered card. */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483646;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--sp-6);
+      }
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+      .modal-card {
+        max-width: 480px;
+        width: 100%;
+        background: var(--c-bg-raised);
+        border: 1px solid var(--c-border-strong);
+        border-radius: 12px;
+        padding: var(--sp-6);
+        box-shadow: 0 32px 80px -16px rgba(0, 0, 0, 0.8);
+      }
+      .modal-card h2 {
+        font-size: var(--font-size-lg);
+        font-weight: var(--font-weight-medium);
+        margin: 0 0 var(--sp-3) 0;
+        color: var(--c-fg-strong);
+      }
+      .modal-card p {
+        font-size: var(--font-size-sm);
+        line-height: 1.55;
+        color: var(--c-fg);
+        margin: 0 0 var(--sp-6) 0;
+        white-space: pre-wrap;
+      }
+      .modal-actions {
+        display: flex;
+        gap: var(--sp-2);
+        justify-content: flex-end;
+      }
       button.primary {
         background: var(--c-accent-muted);
         border-color: var(--c-accent);
@@ -152,10 +271,540 @@
       .error.visible {
         display: block;
       }
+      /* Wizard form layout */
+      .form-stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-4);
+        margin-bottom: var(--sp-6);
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-2);
+      }
+      .field label {
+        font-size: var(--font-size-sm);
+        color: var(--c-fg-muted);
+      }
+      .field input,
+      .field select {
+        font: inherit;
+        font-size: var(--font-size-base);
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--c-border-strong);
+        background: var(--c-bg-sunken);
+        color: var(--c-fg);
+        appearance: none;
+        -webkit-appearance: none;
+      }
+      .field select {
+        /* Custom chevron, since we strip the native one with appearance:none */
+        background-image:
+          linear-gradient(45deg, transparent 50%, var(--c-fg-muted) 50%),
+          linear-gradient(135deg, var(--c-fg-muted) 50%, transparent 50%);
+        background-position:
+          calc(100% - 18px) 50%,
+          calc(100% - 13px) 50%;
+        background-size: 5px 5px, 5px 5px;
+        background-repeat: no-repeat;
+        padding-right: 32px;
+      }
+      .field input:focus,
+      .field select:focus {
+        outline: none;
+        border-color: var(--c-accent);
+        box-shadow: 0 0 0 3px var(--c-accent-subtle);
+      }
+      /* Update-available banner — lives in the manager card, hidden by
+         default, revealed by manager.js when the Rust update watcher
+         emits an `update-available` event with update_available=true. */
+      .update-banner {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-4);
+        padding: var(--sp-3) var(--sp-4);
+        margin-bottom: var(--sp-4);
+        background: var(--c-accent-subtle);
+        border: 1px solid var(--c-accent);
+        border-radius: 8px;
+      }
+      /* Higher-specificity override so `el.hidden = true` actually hides
+         the banner — without this, the `display: flex` above wins over
+         the browser-default `[hidden] { display: none }`. */
+      .update-banner[hidden] {
+        display: none;
+      }
+      .update-banner__text {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: var(--font-size-sm);
+      }
+      .update-banner__text strong {
+        color: var(--c-fg-strong);
+      }
+      .update-banner__text .version {
+        color: var(--c-fg-muted);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+      }
+      .update-banner__actions {
+        display: flex;
+        gap: var(--sp-2);
+        flex-shrink: 0;
+      }
+      .update-banner__actions button {
+        padding: 7px 12px;
+        font-size: var(--font-size-xs);
+      }
+      /* Bootstrap live ticker */
+      .ticker {
+        margin: 0 0 var(--sp-6) 0;
+        padding: var(--sp-3);
+        height: 140px;
+        overflow-y: auto;
+        background: var(--c-bg-sunken);
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--c-fg-muted);
+        line-height: 1.6;
+        white-space: nowrap;
+      }
+      .ticker .line {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* Daemon log panel — persistent in the manager card after install,
+         showing live tail of the daemon's stderr. Hidden when daemon is
+         NotInstalled (no log file yet). */
+      .log-panel {
+        margin-top: var(--sp-4);
+        border-top: 1px solid var(--c-border);
+        padding-top: var(--sp-4);
+      }
+      .log-panel[hidden] {
+        display: none;
+      }
+      .log-panel__header {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3);
+        flex-wrap: wrap;
+        margin-bottom: var(--sp-2);
+      }
+      .log-panel__title {
+        font-size: var(--font-size-xs);
+        font-weight: var(--font-weight-semibold);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--c-fg-muted);
+        margin: 0;
+        margin-right: auto;
+      }
+      .log-panel__filters {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-2);
+        font-size: var(--font-size-xs);
+        color: var(--c-fg-subtle);
+      }
+      .log-panel__filter {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .log-panel__filter input {
+        margin: 0;
+        cursor: pointer;
+      }
+      .log-panel__search {
+        font: inherit;
+        font-size: var(--font-size-xs);
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--c-border-strong);
+        background: var(--c-bg-sunken);
+        color: var(--c-fg);
+        width: 180px;
+      }
+      .log-panel__search:focus {
+        outline: none;
+        border-color: var(--c-accent);
+        box-shadow: 0 0 0 2px var(--c-accent-subtle);
+      }
+      .log-panel__actions {
+        display: flex;
+        gap: 4px;
+      }
+      .log-panel__btn {
+        font-size: var(--font-size-xs);
+        background: none;
+        border: 1px solid var(--c-border);
+        color: var(--c-fg-subtle);
+        padding: 3px 8px;
+        cursor: pointer;
+        border-radius: 6px;
+      }
+      .log-panel__btn:hover:not(:disabled) {
+        color: var(--c-fg);
+        border-color: var(--c-border-strong);
+      }
+      .log-panel__btn:disabled {
+        opacity: 0.4;
+        cursor: progress;
+      }
+      .log-panel__body {
+        margin: 0;
+        padding: var(--sp-3);
+        height: 180px;
+        overflow-y: auto;
+        background: var(--c-bg-sunken);
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--c-fg-muted);
+        line-height: 1.6;
+        white-space: nowrap;
+      }
+      .log-panel__body .line {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* Subtle level color hints based on prefix. Psycheros logger emits
+         lines like `2026-05-19T20:13:17.490Z [INFO ] [General] ...`;
+         the substring match here is a heuristic, good enough to draw the
+         eye to ERRORs and WARNs without parsing structure. */
+      .log-panel__body .line.is-error {
+        color: var(--c-error);
+      }
+      .log-panel__body .line.is-warn {
+        color: var(--c-warning);
+      }
+      /* Filter-driven hiding. The panel body carries data-hide-info /
+         data-hide-warn / data-hide-error attributes; lines with the
+         matching class get display:none. INFO is the implicit default
+         level (no class on the .line element), so we match it by
+         negating .is-warn and .is-error. */
+      .log-panel__body[data-hide-info] .line:not(.is-warn):not(.is-error) {
+        display: none;
+      }
+      .log-panel__body[data-hide-warn] .line.is-warn {
+        display: none;
+      }
+      .log-panel__body[data-hide-error] .line.is-error {
+        display: none;
+      }
+      /* Search hides via inline `style="display:none"` set in JS, so
+         search and filter compose: a line is visible only when both
+         filter rules and the search filter allow it. */
+
+      /* Manager-card footer "tools" row — sits below the keyboard hint
+         and currently hosts the Diagnostics affordance. Subtle text
+         button (not an action button) so it doesn't compete visually
+         with the lifecycle actions above. */
+      .meta__tools {
+        display: flex;
+        justify-content: center;
+        gap: var(--sp-3);
+        margin-top: var(--sp-3);
+      }
+      .meta__tool {
+        background: transparent;
+        border: 1px solid var(--c-border);
+        color: var(--c-fg-muted);
+        font-size: var(--font-size-xs);
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .meta__tool:hover {
+        color: var(--c-fg);
+        border-color: var(--c-border-strong);
+      }
+
+      /* Info-card grid — shared between diagnostics and settings cards.
+         Labeled key/value rows organized into sections; sections divided
+         by uppercase-tracking headings. Row uses a 3-column grid so
+         labels + trailing buttons align across sections regardless of
+         value length. */
+      .info-grid {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-2);
+        margin-bottom: var(--sp-4);
+      }
+      .info-grid__heading {
+        font-size: var(--font-size-xs);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--c-fg-subtle);
+        margin: var(--sp-3) 0 var(--sp-1);
+        font-weight: 600;
+      }
+      .info-row {
+        display: grid;
+        grid-template-columns: 180px 1fr auto;
+        gap: var(--sp-3);
+        align-items: start;
+        padding: var(--sp-2) 0;
+        border-top: 1px solid var(--c-border);
+        font-size: var(--font-size-sm);
+      }
+      .info-row__label {
+        color: var(--c-fg-muted);
+      }
+      .info-row__valuewrap {
+        min-width: 0;
+      }
+      .info-row__value {
+        color: var(--c-fg);
+        word-break: break-all;
+        font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+        font-size: var(--font-size-xs);
+        line-height: 1.5;
+      }
+      .info-row__value--plain {
+        font-family: inherit;
+        font-size: var(--font-size-sm);
+      }
+      .info-row__sub {
+        color: var(--c-fg-subtle);
+        font-size: var(--font-size-xs);
+        margin-top: 2px;
+      }
+      .info-row__action {
+        background: transparent;
+        border: 1px solid var(--c-border);
+        color: var(--c-fg-muted);
+        font-size: var(--font-size-xs);
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        align-self: center;
+      }
+      .info-row__select {
+        font: inherit;
+        font-size: var(--font-size-xs);
+        padding: 4px 6px;
+        border-radius: 6px;
+        border: 1px solid var(--c-border-strong);
+        background: var(--c-bg-sunken);
+        color: var(--c-fg);
+        max-width: 100%;
+      }
+      .info-row__action:hover:not(:disabled) {
+        color: var(--c-fg);
+        border-color: var(--c-border-strong);
+      }
+      .info-row__action:disabled {
+        opacity: 0.4;
+        cursor: progress;
+      }
+      .info-grid__loading {
+        color: var(--c-fg-subtle);
+        text-align: center;
+        padding: var(--sp-6) 0;
+      }
+      .info-grid__error {
+        background: rgba(255, 68, 68, 0.08);
+        border: 1px solid rgba(255, 68, 68, 0.35);
+        color: var(--c-error);
+        padding: var(--sp-3);
+        border-radius: 8px;
+        font-size: var(--font-size-sm);
+      }
+
+      /* Data management card — vertical list of self-contained
+         action rows. Each row pairs a short description with its
+         single action button; destructive rows get a left-edge accent
+         so the eye groups them together. */
+      .data-actions {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+        margin-bottom: var(--sp-4);
+      }
+      .data-action {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-4);
+        padding: var(--sp-3);
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg-sunken);
+      }
+      .data-action--danger {
+        border-color: rgba(255, 68, 68, 0.35);
+        background: rgba(255, 68, 68, 0.04);
+      }
+      .data-action__head {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .data-action__head strong {
+        font-size: var(--font-size-base);
+        color: var(--c-fg);
+      }
+      .data-action__detail {
+        font-size: var(--font-size-xs);
+        color: var(--c-fg-muted);
+        line-height: 1.5;
+      }
+      .data-action button {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+
+      /* Typed-confirm modal — same backdrop shape as the regular
+         confirm modal, plus an input that the user must fill with a
+         specific phrase before the destructive button activates. */
+      .modal-card--wide {
+        max-width: 480px;
+      }
+      .typed-confirm__input {
+        font: inherit;
+        font-size: var(--font-size-base);
+        padding: 8px 10px;
+        margin: var(--sp-2) 0 var(--sp-3);
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid var(--c-border-strong);
+        background: var(--c-bg-sunken);
+        color: var(--c-fg);
+        font-family: var(--font-mono, monospace);
+        letter-spacing: 0.04em;
+      }
+      .typed-confirm__input:focus {
+        outline: none;
+        border-color: var(--c-accent);
+        box-shadow: 0 0 0 2px var(--c-accent-subtle);
+      }
+      .typed-confirm__phrase {
+        font-family: var(--font-mono, monospace);
+        font-weight: var(--font-weight-semibold);
+        color: var(--c-fg);
+      }
+
+      /* Warnings panel — sits above the update banner in the manager
+         card, hidden until self-repair logic decides there's something
+         to surface. Each warning is its own `.warning-entry` card with
+         a short title, body, and one or more remediation buttons. */
+      .warnings-panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-2);
+        margin-bottom: var(--sp-4);
+      }
+      .warnings-panel[hidden] {
+        display: none;
+      }
+      .warning-entry {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-2);
+        padding: var(--sp-3);
+        border-radius: 8px;
+        background: rgba(255, 153, 51, 0.08);
+        border: 1px solid rgba(255, 153, 51, 0.35);
+      }
+      .warning-entry--danger {
+        background: rgba(255, 68, 68, 0.08);
+        border-color: rgba(255, 68, 68, 0.35);
+      }
+      .warning-entry__title {
+        font-weight: var(--font-weight-semibold);
+        color: var(--c-fg);
+        font-size: var(--font-size-sm);
+      }
+      .warning-entry__body {
+        font-size: var(--font-size-xs);
+        color: var(--c-fg-muted);
+        line-height: 1.5;
+      }
+      .warning-entry__actions {
+        display: flex;
+        gap: var(--sp-2);
+        flex-wrap: wrap;
+      }
+      .warning-entry__actions button {
+        font-size: var(--font-size-xs);
+        padding: 4px 10px;
+        border-radius: 6px;
+      }
     </style>
   </head>
   <body data-state="unknown">
-    <main class="card">
+    <!-- Welcome wizard: first-run only. Hidden by default; first-run.js
+         reveals it when `needs_first_run` returns true. -->
+    <main class="card" id="card-wizard" hidden>
+      <header>
+        <h2 class="brand">Psycheros · Welcome</h2>
+      </header>
+
+      <h1>Hello.</h1>
+      <p class="detail">
+        I'm just getting set up here. A few quick choices and I'll be ready.
+      </p>
+
+      <form id="wizard-form" class="form-stack" autocomplete="off">
+        <div class="field">
+          <label for="wf-entity">What should I call myself?</label>
+          <input
+            id="wf-entity"
+            name="entity_name"
+            type="text"
+            value="Assistant"
+          />
+        </div>
+        <div class="field">
+          <label for="wf-user">And what should I call you?</label>
+          <input id="wf-user" name="user_name" type="text" value="You" />
+        </div>
+        <div class="field">
+          <label for="wf-tz">My timezone</label>
+          <select id="wf-tz" name="timezone">
+            <!-- Options populated by first-run.js from
+                 Intl.supportedValuesOf('timeZone'), pre-selecting the
+                 detected zone. Type the first letters of a zone name to
+                 jump to it (native browser feature). -->
+          </select>
+        </div>
+        <button type="submit" class="primary">Let's begin</button>
+      </form>
+
+      <div class="error" id="wizard-error"></div>
+    </main>
+
+    <!-- Bootstrap progress: shown while first_run runs (extract → stage Deno
+         → warm Deno cache). -->
+    <main class="card" id="card-bootstrap" hidden>
+      <header>
+        <h2 class="brand">Psycheros · Setting up</h2>
+      </header>
+
+      <h1 id="bootstrap-title">Setting myself up…</h1>
+      <p class="detail" id="bootstrap-detail">This only happens once.</p>
+
+      <pre class="ticker" id="bootstrap-ticker" aria-live="polite"></pre>
+
+      <div class="error" id="bootstrap-error"></div>
+      <div class="actions" id="bootstrap-actions"></div>
+    </main>
+
+    <!-- Manager: the post-first-run home. Hidden until either first-run
+         completes or needs_first_run returns false on this boot. -->
+    <main class="card" id="card-manager" hidden>
       <header>
         <h2 class="brand">Psycheros · Manager</h2>
         <span class="status-pill">
@@ -169,10 +818,338 @@
 
       <div class="error" id="error"></div>
 
+      <!-- Warnings panel — surfaces self-repair-worthy issues that
+           the underlying state probes don't directly expose. Driven
+           by frontend/js/warnings.js: log-line substring match for
+           MCP-down, daemon-status-changed history for crashloops,
+           and a port-conflict lookup when stuck in Installed. -->
+      <div class="warnings-panel" id="warnings-panel" hidden></div>
+
+      <div class="update-banner" id="update-banner" hidden>
+        <div class="update-banner__text">
+          <strong>Update available</strong>
+          <span class="version" id="update-banner__version"></span>
+        </div>
+        <div class="update-banner__actions">
+          <button id="update-banner__apply" class="primary">Update now</button>
+          <button id="update-banner__later">Later</button>
+        </div>
+      </div>
+
+      <!-- Loud, central indicator that the launcher is doing something.
+           Shown around every action button click (per makeButton's
+           busy-state wrapper). Hidden by default. -->
+      <div
+        class="action-progress"
+        id="action-progress"
+        hidden
+        role="status"
+        aria-live="polite"
+      >
+        <span id="action-progress-text"></span>
+      </div>
+
       <div class="actions" id="actions"></div>
+
+      <!-- Live daemon log tail. Always-on after install. Populated from
+           recent_daemon_log_lines on init + appended to via
+           `daemon-log-line` events emitted by the Rust log tailer.
+           Filter toggles, search, and the copy/save/load-more buttons
+           are pure-frontend — the Rust side only emits raw lines. -->
+      <section class="log-panel" id="log-panel" hidden>
+        <div class="log-panel__header">
+          <h3 class="log-panel__title">Daemon log</h3>
+          <div
+            class="log-panel__filters"
+            role="group"
+            aria-label="Log level filters"
+          >
+            <label class="log-panel__filter">
+              <input type="checkbox" id="log-filter-info" checked />
+              <span>info</span>
+            </label>
+            <label class="log-panel__filter">
+              <input type="checkbox" id="log-filter-warn" checked />
+              <span>warn</span>
+            </label>
+            <label class="log-panel__filter">
+              <input type="checkbox" id="log-filter-error" checked />
+              <span>error</span>
+            </label>
+          </div>
+          <input
+            type="search"
+            id="log-search"
+            class="log-panel__search"
+            placeholder="Filter by substring…"
+            aria-label="Search log lines"
+          />
+          <div class="log-panel__actions">
+            <button
+              type="button"
+              class="log-panel__btn"
+              id="log-panel-copy"
+              title="Copy visible lines to clipboard"
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              class="log-panel__btn"
+              id="log-panel-save"
+              title="Save visible lines as a .log file"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              class="log-panel__btn"
+              id="log-panel-more"
+              title="Re-read the log file with a larger tail"
+            >
+              Load more
+            </button>
+            <button
+              type="button"
+              class="log-panel__btn"
+              id="log-panel-clear"
+              title="Clear the panel view (file is untouched)"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        <pre
+          class="log-panel__body"
+          id="log-panel-body"
+          aria-live="polite"
+        ></pre>
+      </section>
 
       <div class="meta" id="meta"></div>
     </main>
+
+    <!-- Data management. Backup / Restore / Wipe / Re-init.
+         All four actions confirm before running (typed confirm for
+         the two destructive ones). Surface only useful when there's
+         data to act on — content is gated on daemon state where
+         relevant (backup needs Running; restore can run while
+         stopped; wipe + re-init manage their own daemon stop). -->
+    <main class="card" id="card-data" hidden>
+      <header>
+        <h2 class="brand">Psycheros · Data</h2>
+      </header>
+
+      <h1>Manage my data.</h1>
+      <p class="detail">
+        Back ups go to your <code>Downloads</code> folder. Restore reads a zip
+        you previously exported and overwrites my current state with it. Wipe
+        and Re-init are destructive — wipe clears my memories/identity/vault;
+        re-init reclones source and templates fresh identity.
+      </p>
+
+      <div class="error" id="data-error"></div>
+
+      <section class="data-actions" id="data-actions">
+        <div class="data-action">
+          <div class="data-action__head">
+            <strong>Back up</strong>
+            <span class="data-action__detail">
+              Exports a snapshot of my entity data (memories, vault, identity,
+              settings, generated images) as a zip in your Downloads folder.
+              Daemon must be running.
+            </span>
+          </div>
+          <button type="button" id="data-backup" class="primary">
+            Back up to Downloads
+          </button>
+        </div>
+
+        <div class="data-action">
+          <div class="data-action__head">
+            <strong>Restore</strong>
+            <span class="data-action__detail">
+              Reads a previously-exported zip and replaces my current data with
+              what's inside it. Daemon must be running; I'll restart
+              automatically when the import finishes.
+            </span>
+          </div>
+          <button type="button" id="data-restore">
+            Choose a backup file…
+          </button>
+        </div>
+
+        <div class="data-action data-action--danger">
+          <div class="data-action__head">
+            <strong>Wipe entity data</strong>
+            <span class="data-action__detail">
+              Clears my memories, identity files, vault docs, and database. The
+              OS service registration stays — first-run will template fresh
+              identity files on next launch. Cannot be undone unless you've
+              backed up first.
+            </span>
+          </div>
+          <button type="button" id="data-wipe" class="danger">
+            Wipe…
+          </button>
+        </div>
+
+        <div class="data-action data-action--danger">
+          <div class="data-action__head">
+            <strong>Re-init</strong>
+            <span class="data-action__detail">
+              Stops the daemon, deletes my source clone + identity dir,
+              uninstalls the OS service. You'll go through the first-run wizard
+              again to re-bootstrap. Memories and vault content survive this —
+              only identity is reset.
+            </span>
+          </div>
+          <button type="button" id="data-reinit" class="danger">
+            Re-init…
+          </button>
+        </div>
+      </section>
+
+      <div
+        class="action-progress"
+        id="data-progress"
+        hidden
+        role="status"
+        aria-live="polite"
+      >
+        <span id="data-progress-text"></span>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="data-back" class="primary">
+          Back to manager
+        </button>
+      </div>
+    </main>
+
+    <!-- Settings surface. View-only — actual edits happen inside
+         psycheros's own UI (the chat client's Settings tab). The "Edit
+         in Psycheros" button routes the webview back to chat so the
+         user can navigate to Settings → General there. -->
+    <main class="card" id="card-settings" hidden>
+      <header>
+        <h2 class="brand">Psycheros · Settings</h2>
+      </header>
+
+      <h1>What I'm configured as.</h1>
+      <p class="detail">
+        These are the values psycheros boots with. Edits happen inside
+        psycheros's own UI — the values below are pulled fresh from
+        <code>general-settings.json</code> each time you open this card.
+      </p>
+
+      <section class="info-grid" id="settings-body" aria-busy="true">
+        <div class="info-grid__loading">Loading settings…</div>
+      </section>
+
+      <div class="actions">
+        <button type="button" id="settings-back" class="primary">
+          Back to manager
+        </button>
+        <button type="button" id="settings-edit-in-psycheros">
+          Edit in Psycheros
+        </button>
+        <button type="button" id="settings-refresh">Refresh</button>
+      </div>
+    </main>
+
+    <!-- Diagnostics surface. Toggle from the manager card's "Diagnostics"
+         button; populated by get_diagnostics; Reveal buttons call
+         open_path; Back returns to card-manager. -->
+    <main class="card" id="card-diagnostics" hidden>
+      <header>
+        <h2 class="brand">Psycheros · Diagnostics</h2>
+      </header>
+
+      <h1>What I know about myself.</h1>
+      <p class="detail">
+        Read-only snapshot. Use the Reveal buttons to open paths in your file
+        manager. Refresh re-walks the disk and re-queries the supervisor —
+        useful after a daemon restart.
+      </p>
+
+      <section class="info-grid" id="diagnostics-body" aria-busy="true">
+        <div class="info-grid__loading">Gathering diagnostics…</div>
+      </section>
+
+      <div class="actions">
+        <button type="button" id="diagnostics-back" class="primary">
+          Back to manager
+        </button>
+        <button type="button" id="diagnostics-refresh">Refresh</button>
+      </div>
+    </main>
+
+    <!-- Confirm dialog used in place of native window.confirm (which
+         Tauri 2 webviews silently block). Backdrop blocks click-through
+         so the user can't accidentally interact with whatever's behind
+         it. -->
+    <div
+      class="modal-backdrop"
+      id="confirm-modal"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-modal-title"
+    >
+      <div class="modal-card">
+        <h2 id="confirm-modal-title">Are you sure?</h2>
+        <p id="confirm-modal-body"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-modal-cancel">Cancel</button>
+          <button type="button" id="confirm-modal-ok" class="danger">
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Typed-confirm modal — the destructive-actions speed bump. The
+         user has to type a specific phrase into the input before the
+         confirm button activates. Same backdrop semantics as the
+         regular confirm modal. -->
+    <div
+      class="modal-backdrop"
+      id="typed-confirm-modal"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="typed-confirm-modal-title"
+    >
+      <div class="modal-card modal-card--wide">
+        <h2 id="typed-confirm-modal-title">This can't be undone.</h2>
+        <p id="typed-confirm-modal-body"></p>
+        <p>
+          Type
+          <span class="typed-confirm__phrase" id="typed-confirm-modal-phrase"
+          >CONFIRM</span>
+          below to enable the button.
+        </p>
+        <input
+          type="text"
+          id="typed-confirm-modal-input"
+          class="typed-confirm__input"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="modal-actions">
+          <button type="button" id="typed-confirm-modal-cancel">Cancel</button>
+          <button
+            type="button"
+            id="typed-confirm-modal-ok"
+            class="danger"
+            disabled
+          >
+            Proceed
+          </button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./js/manager.js"></script>
   </body>

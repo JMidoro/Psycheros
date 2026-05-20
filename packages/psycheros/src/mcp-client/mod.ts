@@ -497,6 +497,31 @@ export class MCPClient {
         const response = JSON.parse(textContent);
 
         if (response.success && response.identityFiles) {
+          // Empty entity-core = "no opinion", not "authoritative
+          // deletion". On a fresh install, src/init/mod.ts has just
+          // templated identity files from
+          // packages/psycheros/templates/identity/ with the wizard's
+          // entity name substituted. Treating an empty pull response
+          // as authoritative would have syncIdentityToLocal() then
+          // wipe those templates, leaving the user with no identity
+          // and the wrong name across the UI. Skip the local sync
+          // entirely when entity-core has nothing to say; the
+          // templated files stay sovereign until a real push happens.
+          //
+          // Users who *want* a clean identity reset use the launcher's
+          // separate Re-init flow (which also re-runs the templates).
+          const totalFiles = (response.identityFiles.self?.length ?? 0) +
+            (response.identityFiles.user?.length ?? 0) +
+            (response.identityFiles.relationship?.length ?? 0) +
+            (response.identityFiles.custom?.length ?? 0);
+          if (totalFiles === 0) {
+            this.cache.lastSync = new Date().toISOString();
+            console.log(
+              "[MCP] entity-core has no identity files; keeping local templates",
+            );
+            return this.cache.identity;
+          }
+
           this.cache.identity = response.identityFiles;
           this.cache.lastSync = new Date().toISOString();
 

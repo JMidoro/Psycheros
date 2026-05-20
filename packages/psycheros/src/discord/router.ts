@@ -329,27 +329,42 @@ export class MessageRouter {
 
         // No periodic timer needed for slow tier
         this.clearPeriodicTimer(channelId);
-      } else {
-        // Medium/fast tier: periodic digest handles flushing.
-        // Do not set debounce timer — only mentions trigger immediate flush.
+      } else if (tier === "medium") {
+        // Medium tier: periodic digest only. The entity checks in on the
+        // channel at a measured pace, like someone glancing at it periodically.
+        // No per-message debounce — the periodic timer is the sole trigger.
         const tierTransitioned = previousTier !== tier;
 
         if (tierTransitioned || !this.periodicTimers.has(channelId)) {
-          // (Re)start periodic timer on tier change or first entry to medium/fast.
           this.restartPeriodicTimer(channelId);
-
-          // On slow→medium/fast transition, schedule an immediate flush after
-          // debounce so the entity sees the burst that caused the transition.
-          if (tierTransitioned && previousTier === "slow") {
-            const existingTimer = this.timers.get(channelId);
-            if (existingTimer) clearTimeout(existingTimer);
-
-            const timer = setTimeout(() => {
-              this.onPeriodicFlush(channelId);
-            }, this.deps.config.debounceWindowMs);
-            this.timers.set(channelId, timer);
-          }
         }
+      } else {
+        // Fast tier: per-message debounce + buffer-size limit.
+        // Debounce catches natural pauses. If the channel never pauses, the
+        // buffer-size limit guarantees the entity can participate after enough
+        // conversation has accumulated — like someone chiming in during a
+        // lively group discussion.
+        this.clearPeriodicTimer(channelId);
+
+        // Buffer-size limit: flush immediately when enough messages accumulate.
+        if (
+          buffer.length >= this.deps.config.activeModeTiers.fastBufferFlushSize
+        ) {
+          const existingTimer = this.timers.get(channelId);
+          if (existingTimer) clearTimeout(existingTimer);
+          this.timers.delete(channelId);
+          this.flushBuffer(channelId, "active", tier);
+          return;
+        }
+
+        // Per-message debounce: reset on each new message.
+        const existingTimer = this.timers.get(channelId);
+        if (existingTimer) clearTimeout(existingTimer);
+
+        const timer = setTimeout(() => {
+          this.flushBuffer(channelId, "active", tier);
+        }, this.deps.config.debounceWindowMs);
+        this.timers.set(channelId, timer);
       }
       return;
     }
@@ -404,18 +419,6 @@ export class MessageRouter {
       return;
     }
 
-    // Determine whether this is a mention-triggered flush
-    const isMentionFlush = buffer.some((m) => m.mentionsBot);
-
-    // In active mode, keep messages in the buffer across non-mention flushes.
-    // This gives the entity full accumulated context on every trigger, like lurk mode.
-    // The buffer is only cleared on mention flushes (fresh start after direct engagement).
-    if (mode === "active" && !isMentionFlush) {
-      // Don't clear the buffer — messages accumulate
-    } else {
-      this.buffers.delete(channelId);
-    }
-
     // Clear timer
     const timer = this.timers.get(channelId);
     if (timer) {
@@ -430,6 +433,10 @@ export class MessageRouter {
       );
       return;
     }
+
+    // Clear the buffer now that we're committed to processing. Messages that
+    // arrive during the entity turn will be added to a fresh buffer.
+    this.buffers.delete(channelId);
 
     this.processing.add(channelId);
     try {
@@ -539,13 +546,9 @@ export class MessageRouter {
     this.clearPeriodicTimer(channelId);
 
     const tier = this.channelTiers.get(channelId) ?? "slow";
-    if (tier === "slow") return;
+    if (tier !== "medium") return;
 
-    const tierConfig = this.deps.config.activeModeTiers;
-    const intervalMs = tier === "fast"
-      ? tierConfig.fastDigestIntervalMs
-      : tierConfig.mediumDigestIntervalMs;
-
+    const intervalMs = this.deps.config.activeModeTiers.mediumDigestIntervalMs;
     const timer = setInterval(() => {
       this.onPeriodicFlush(channelId);
     }, intervalMs);
@@ -609,8 +612,8 @@ export class MessageRouter {
       this.timers.delete(channelId);
     }
 
-    // Reset periodic timer (mention resets the digest clock)
-    if (tier !== "slow") {
+    // Reset periodic timer for medium tier (mention resets the digest clock)
+    if (tier === "medium") {
       this.restartPeriodicTimer(channelId);
     }
 

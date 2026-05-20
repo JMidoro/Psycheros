@@ -6,12 +6,24 @@
 // Storage key for theme preferences
 const THEME_KEY = 'psycheros-theme';
 
-// Predefined color themes
+// Predefined color themes.
+//
+// `logoStops` is an optional 5-stop hand-tuned gradient used for the
+// brand mark's strokes. When absent, theme.js derives stops procedurally
+// from the accent hue using the canonical violet→cyan-magenta gradient's
+// relative offsets (see generateLogoStops). Hand-tune a preset by
+// adding `logoStops` when the procedural result is unsatisfying for
+// that hue family.
 const THEMES = {
   phosphor: { accent: '#39ff14', name: 'Phosphor Green' },
   ocean: { accent: '#00d4ff', name: 'Ocean Blue' },
   sunset: { accent: '#ff6b35', name: 'Sunset Orange' },
-  violet: { accent: '#a855f7', name: 'Violet Dream' },
+  violet: {
+    accent: '#a855f7',
+    name: 'Violet Dream',
+    // Canonical brand gradient — preserved exactly for the default theme.
+    logoStops: ['#00D2FF', '#66BEFE', '#A989FD', '#C54EFE', '#D200FF'],
+  },
   rose: { accent: '#f43f5e', name: 'Rose' },
   amber: { accent: '#f59e0b', name: 'Amber' },
   mint: { accent: '#10b981', name: 'Mint' },
@@ -115,6 +127,27 @@ function generateColorVariants(hex) {
   };
 }
 
+/**
+ * Derive a 5-stop logo gradient from any accent hex as a single-hue
+ * lightness ramp. Stays cohesive with the theme (no excursions into
+ * unrelated hue families). The violet preset overrides this with the
+ * canonical cyan→magenta brand gradient via its `logoStops` entry —
+ * everything else gets this monochromatic ramp on the accent hue.
+ *
+ * @param {string} hex - Base accent color
+ * @returns {string[]} 5 hex stops, lightest → darkest
+ */
+function generateLogoStops(hex) {
+  if (!hexToRgb(hex)) return null;
+  return [
+    lighten(hex, 0.30),
+    lighten(hex, 0.15),
+    hex,
+    darken(hex, 0.20),
+    darken(hex, 0.40),
+  ];
+}
+
 // =============================================================================
 // Theme Application
 // =============================================================================
@@ -137,6 +170,17 @@ function applyTheme(theme) {
     root.style.setProperty('--c-accent-muted', variants.muted);
     root.style.setProperty('--c-accent-subtle', variants.subtle);
     root.style.setProperty('--c-accent-glow', variants.glow);
+  }
+
+  // Logo gradient stops. Preset's hand-tuned logoStops win; otherwise
+  // derive procedurally from the accent (works for both custom user
+  // accents and presets without an override).
+  const presetStops = !theme.customAccent && THEMES[theme.preset]?.logoStops;
+  const logoStops = presetStops || generateLogoStops(accentColor);
+  if (logoStops && logoStops.length === 5) {
+    logoStops.forEach((stop, i) => {
+      root.style.setProperty(`--c-logo-stop-${i}`, stop);
+    });
   }
 
   // Apply background image settings
@@ -448,11 +492,17 @@ globalThis.Theme = {
   lighten,
   darken,
   generateColorVariants,
+  generateLogoStops,
 };
 
-// Auto-initialize on load
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initTheme);
-} else {
-  initTheme();
+// Auto-initialize on load. Gated on `document` so this module can be
+// loaded by Deno test runners (which set up the color utilities on
+// `globalThis.Theme` but have no DOM) without touching localStorage or
+// firing the `/api/appearance-settings` fetch.
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initTheme);
+  } else {
+    initTheme();
+  }
 }

@@ -5456,6 +5456,8 @@ export async function handleSaveDiscordSettings(
       defaultChannelId: body.defaultChannelId ?? current.defaultChannelId,
       gatewayEnabled: body.gatewayEnabled ?? current.gatewayEnabled,
       globalInstructions: body.globalInstructions ?? current.globalInstructions,
+      showHubInSidebar: body.showHubInSidebar ?? current.showHubInSidebar ??
+        true,
     };
 
     await ctx.updateDiscordSettings(updated);
@@ -8696,6 +8698,7 @@ export function handleGetDiscordStatus(ctx: RouteContext): Response {
       connected: gateway?.isConnected() ?? false,
       enabled: settings.enabled,
       gatewayEnabled: settings.gatewayEnabled,
+      showHubInSidebar: settings.showHubInSidebar !== false,
       botUserId: gateway?.getBotUserId() ?? null,
       botUsername: gateway?.getBotUsername() ?? null,
       guildCount: guilds.length,

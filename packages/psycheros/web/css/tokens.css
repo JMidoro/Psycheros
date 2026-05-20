@@ -30,6 +30,16 @@
   --c-accent-subtle: rgba(168, 85, 247, 0.08);
   --c-accent-glow: rgba(168, 85, 247, 0.25);
 
+  /* Brand mark gradient — 5 stops driven by theme.js at runtime.
+     Defaults below are the canonical violet preset (cyan→magenta);
+     theme.js overrides these per preset (or derives them procedurally
+     from a custom accent via canonical hue/lightness offsets). */
+  --c-logo-stop-0: #00d2ff;
+  --c-logo-stop-1: #66befe;
+  --c-logo-stop-2: #a989fd;
+  --c-logo-stop-3: #c54efe;
+  --c-logo-stop-4: #d200ff;
+
   /* Secondary - muted for thinking/secondary elements */
   --c-muted: #666666;
   --c-muted-subtle: rgba(102, 102, 102, 0.1);

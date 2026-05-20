@@ -22,6 +22,7 @@ export interface DiscordSettings {
   enabled: boolean;
   gatewayEnabled: boolean;
   globalInstructions: string;
+  showHubInSidebar: boolean;
 }
 
 // =============================================================================
@@ -76,8 +77,8 @@ export interface ActiveModeTierConfig {
   rateWindowMinutes: number;
   /** Digest interval for medium tier in milliseconds */
   mediumDigestIntervalMs: number;
-  /** Digest interval for fast tier in milliseconds */
-  fastDigestIntervalMs: number;
+  /** Number of buffered messages that triggers an immediate flush in fast tier */
+  fastBufferFlushSize: number;
   /** Short debounce for mention/reply-triggered flushes in milliseconds */
   mentionDebounceMs: number;
 }
@@ -93,6 +94,7 @@ export function getDefaultDiscordSettings(): DiscordSettings {
     enabled: !!(Deno.env.get("DISCORD_BOT_TOKEN")),
     gatewayEnabled: false,
     globalInstructions: "",
+    showHubInSidebar: true,
   };
 }
 
@@ -122,7 +124,7 @@ export function getDefaultDiscordGatewayConfig(): DiscordGatewayConfig {
       mediumToFastThreshold: 6,
       rateWindowMinutes: 60,
       mediumDigestIntervalMs: 30 * 60 * 1000,
-      fastDigestIntervalMs: 10 * 60 * 1000,
+      fastBufferFlushSize: 10,
       mentionDebounceMs: 1500,
     },
     includeInDailyMemories: true,

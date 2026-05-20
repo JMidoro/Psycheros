@@ -1,134 +1,100 @@
-# Migration from v1
+# Migrating from launcher-v1
 
-Users on the v1 launcher (`packages/launcher/`) have a `~/psycheros` clone with
-state in `~/psycheros/packages/psycheros/.psycheros/`, `identity/`, etc. The v2
-launcher needs to bring them across without losing data.
+If I've been running on v1 (the `packages/launcher/` install with a
+`~/psycheros` clone), my entity state lives inside that clone — identity files,
+memory database, vault, knowledge graph, custom tools. Switching to v2 without
+migrating would leave that entity orphaned in the git tree while v2 booted a
+brand-new empty one in `~/Library/Application Support/Psycheros/data/`.
 
-## Detection
+This doc covers the migration procedure.
 
-On first launch, the v2 launcher checks for v1 artifacts:
+## Approach: use Psycheros's own export/import round trip
 
-```
-~/.psycheros-launcher-state.json     v1's persisted install path
-~/<install_path>/packages/psycheros/.psycheros/psycheros.db
-~/<install_path>/packages/psycheros/identity/
-```
+Psycheros itself has a built-in entity-data export and import flow at
+`/api/admin/entity-data/{export,import}`, exposed in the chat UI under
+**Settings → Admin → Entity Data**. The launcher delegates to that flow rather
+than building a parallel migration path. Reasons:
 
-If any of these exist, the launcher offers a migration flow on the first-run
-welcome screen rather than the default "fresh install" flow.
+- **Single source of truth for the format.** Psycheros owns the export zip shape
+  and the import-restore logic. Maintaining a duplicate path in the launcher
+  would split that knowledge in two and rot quickly.
+- **Already battle-tested.** The post-import lifecycle (MCP restart for clean DB
+  state, sync cleanup, JSZip folder-listing semantics, vault document scope) has
+  had real bug-fix iteration. Reusing it inherits those fixes.
+- **No installer chicken-and-egg.** Importing requires a running daemon. If the
+  launcher tried to drive import during first-run, it would have to install
+  autostart + wait for the daemon to bind port 3000 + then POST the zip —
+  fragile and overlaps with the very flow the manager card already exposes.
+- **Smaller installer surface.** Every line of import code in the installer is
+  one more thing that can fail on a fresh machine.
 
-## Two migration paths
+## The procedure
 
-### Path A — Adopt existing clone (lazy)
+> Do step 1 BEFORE uninstalling v1 — the export needs v1's daemon running.
 
-For users who want to keep developing psycheros from their existing git clone or
-who don't want their state moved.
+1. **Export from v1.**
+   - Open the chat UI in v1 (`http://localhost:3000`).
+   - Settings → **Admin** → **Entity Data** → **Export**.
+   - Save the resulting `.zip` somewhere safe (e.g. `~/Desktop/`).
 
-```
-1. Launcher writes config.json with:
-   - source_dir = <existing-clone>/packages/psycheros
-   - data_dir = <existing-clone>/packages/psycheros
-   - bundled_source_version = null (signals "don't use bundle")
-2. Launcher offers Install autostart pointing at the existing clone
-3. Service definition sets:
-   - WorkingDirectory = <existing-clone>/packages/psycheros
-   - (PSYCHEROS_DATA_DIR not set — defaults to projectRoot per psycheros 0.3 semantics)
-4. Future shell auto-updates do NOT replace the existing clone
-```
+2. **Install v2.** Download `Psycheros.dmg` from the latest release. Drag into
+   `/Applications/`. Follow the macOS first-launch dance in the
+   [launcher README](../README.md#first-launch-on-macos) (right-click → Open, or
+   the `xattr` one-liner).
 
-**Pro:** Zero data movement. User's git history preserved. They can still
-`git pull` to update psycheros from their terminal.
+3. **Complete first-run setup.** Open Psycheros.app. The welcome wizard asks for
+   my name + the user's name + timezone, then runs the one-time bootstrap
+   (cloning source, staging the Deno runtime, loading dependencies). When it
+   finishes, the manager card appears.
 
-**Con:** No source bundle versioning. Updating psycheros is the user's job, not
-the launcher's.
+4. **Click "Install autostart"** (or "Install for manual start/stop", whichever
+   fits the user's preference). The daemon comes up with a fresh empty entity.
 
-### Path B — Move to launcher-managed location
+5. **Import the export zip.**
+   - When the launcher flips to chat, navigate to **Settings → Admin → Entity
+     Data → Import**.
+   - Select the `.zip` from step 1.
+   - The daemon processes the import, restarts MCP for a clean DB state, and
+     reloads. The fresh entity is replaced with the migrated one.
 
-For users who want the launcher to take full ownership of psycheros's source +
-state.
+6. **Verify.** Open chat and confirm my entity remembers the conversations +
+   identity from v1.
 
-```
-1. Show "Move Psycheros to <data_dir>/?" prompt with file listing
-2. On confirm:
-   a. Copy state directories (~7) into <data_dir>/data/
-   b. Extract bundled release-bundle.tar.gz into <data_dir>/source/
-   c. Verify state copy succeeded (file counts match)
-3. Write config.json with launcher-managed paths
-4. Offer Install autostart
-5. Service definition sets:
-   - WorkingDirectory = <data_dir>/source/packages/psycheros
-   - PSYCHEROS_DATA_DIR = <data_dir>/data/
-```
-
-**Pro:** Future shell updates auto-update psycheros source. State durably
-preserved across updates (separate dir from source).
-
-**Con:** Existing clone becomes orphaned (user can `git pull` it but the
-launcher won't see those changes unless they re-migrate).
-
-## What gets moved in Path B
-
-The seven directories the `PSYCHEROS_DATA_DIR` refactor identified:
-
-```
-<existing-clone>/packages/psycheros/.psycheros/        → <data>/data/.psycheros/
-<existing-clone>/packages/psycheros/identity/         → <data>/data/identity/
-<existing-clone>/packages/psycheros/.snapshots/        → <data>/data/.snapshots/
-<existing-clone>/packages/psycheros/memories/         → <data>/data/memories/
-<existing-clone>/packages/psycheros/custom-tools/      → <data>/data/custom-tools/
-<existing-clone>/packages/psycheros/backgrounds/       → <data>/data/backgrounds/
-<existing-clone>/packages/entity-core/data/           → <data>/data/entity-core/data/
-```
-
-These are exactly the dirs that resolve under `dataRoot` post- refactor.
-Templates, web/, scripts/, src/ — everything else stays in the source bundle and
-gets replaced on update.
-
-## Migration safety
-
-The migration is a **copy, not a move**:
-
-- Original clone is left intact.
-- If migration fails or user changes their mind, the original is the rollback
-  path.
-- Once user confirms migration succeeded (after a successful daemon start from
-  the new location), the manager surface offers a "delete original clone" button
-  — but never automatically.
-
-## v1 launcher artifacts
-
-The v1 launcher writes:
-
-- `~/.psycheros-launcher-state.json` — has `installDir` field
-- `~/psycheros/start.sh` / `stop.sh` / `update.sh` — generated by v1 installer
-- launchd plist (rare — v1 didn't auto-install autostart, but some users wrote
-  their own)
-
-The v2 launcher's first-run can offer to clean these up:
-
-- `~/.psycheros-launcher-state.json` — safe to delete after migration
-- `start.sh` / `stop.sh` / `update.sh` — safe to delete (no longer meaningful;
-  the v2 launcher replaces all three)
-- User-created plists with label other than `ai.psycheros.daemon` — do not touch
-  (might be theirs, not v1's)
+7. **Decommission v1** (optional but recommended). Run v1's
+   `~/psycheros/stop.sh`, then delete or archive `~/psycheros/` once you're
+   satisfied with the v2 install.
 
 ## Coexistence period
 
-For a release or two, the v1 launcher and v2 launcher can coexist on the same
-machine. Once a user has migrated to v2, the v1 launcher should display a "this
-launcher is deprecated — open Psycheros.app instead" banner. After ~3 months of
-public availability, v1 gets deleted from the monorepo and unpublished from
-release pipelines.
+v1 and v2 can coexist on the same machine — they listen on different ports (v1
+at `:3000`, v2 also at `:3000` if both autostarted, which won't work — only one
+can bind the port at a time). If you want to keep v1 around as a fallback before
+fully cutting over, **don't run both at once**: either install v2 in manual mode
+and start it only when needed, or uninstall v1 autostart
+(`launchctl unload -w
+~/Library/LaunchAgents/<v1-label>.plist`) before v2 takes
+over.
 
-## Future: "import from Docker"
+## When the export-import flow won't cover it
 
-Users running psycheros via Docker have state in a docker volume. The v2
-launcher could offer to:
+If the `.zip` from v1 fails to import in v2 (schema drift, breaking changes in a
+major version bump, etc.), the right answer is to fix the import path in
+`packages/psycheros/src/server/entity-data.ts` so it handles the older format.
+**Don't reach for a launcher-side workaround** — that splits the migration logic
+across packages and we'll regret it the next time the format shifts. Add the
+back-compat handling to the canonical importer and the launcher inherits the
+fix.
 
-1. Stop the docker-compose stack
-2. Copy state out of the docker volume to `<data>/data/`
-3. Switch to launcher-supervised mode
+## v1 artifacts that are safe to leave
 
-Deferred — Docker users are technical enough to handle migration manually, and
-the v2 launcher's own state location is documented. Add this when there's
-evidence of demand.
+After a successful migration, these v1 files are no longer load-bearing but are
+also safe to leave alone:
+
+- `~/.psycheros-launcher-state.json` — v1's install-path marker.
+- `~/psycheros/start.sh` / `stop.sh` / `update.sh` — v1 helper scripts.
+- The `~/psycheros/` clone itself — useful as a `git pull`able reference, and as
+  the rollback path if anything in v2 goes wrong before the export.zip lands.
+
+I deliberately don't delete any of these from the launcher's side. If the user
+wants to clean up after verifying the migration worked, that's a manual `rm`
+call they make themselves, not something the launcher does on their behalf.

@@ -56,11 +56,30 @@ Discord Gateway is configured via **Settings > External Connections > Channels >
 Discord** in the web UI, not via env vars. Settings persist to
 `.psycheros/discord-gateway.json`.
 
+The "Show Discord Hub in Sidebar" toggle in the Connection section controls
+whether the Discord Hub entry appears in the Conversations sidebar. Defaults to
+on. Toggling it off and saving hides the Hub immediately without a page refresh.
+
 | Field                    | Type    | Default | Description                                                                                                                                                             |
 | ------------------------ | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `includeInDailyMemories` | boolean | `true`  | Include Discord activity in daily memory summarization via pre-summarizer                                                                                               |
 | `memoryInstructions`     | string  | `""`    | Instructions for the pre-summarizer and daily memory writer (e.g., handle mappings like "superdog420 is James"). Written in first-person from the entity's perspective. |
 | `debounceWindowMs`       | number  | `5000`  | Wait time (ms) after the last message before flushing the accumulation buffer to the entity. Resets on each new message.                                                |
+
+### Active Mode Tiers
+
+Active-mode channels are classified into tiers based on message rate. Each tier
+has a distinct engagement personality:
+
+| Tier   | Trigger     | Behavior                                                                                                 |
+| ------ | ----------- | -------------------------------------------------------------------------------------------------------- |
+| Slow   | < 2 msgs/hr | Per-message debounce — entity responds after every natural pause                                         |
+| Medium | 2–5 msgs/hr | Periodic digest — entity checks in at a measured pace, like someone glancing at the channel periodically |
+| Fast   | ≥ 6 msgs/hr | Debounce + buffer-size limit — entity catches pauses and also chimes in after enough messages accumulate |
+
+The buffer-size limit for fast tier (`fastBufferFlushSize`, default 10) ensures
+the entity can participate in rapid-fire conversations even when there's never a
+pause long enough for debounce to fire.
 
 Channels can be toggled on/off at runtime via the Discord Hub. Removing a
 channel immediately tears down its accumulation buffer, debounce timer, and

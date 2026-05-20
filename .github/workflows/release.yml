@@ -24,7 +24,16 @@ permissions:
 
 jobs:
   launcher:
-    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'launcher-v')
+    # v1 launcher. Excludes `launcher-v2-v*` because the glob
+    # `launcher-v*` matches both lineages — the launcher-v2 job below
+    # owns those tags. Once v2 reaches feature parity and v1 is
+    # deleted (see packages/launcher-v2/docs/migration.md), this
+    # workflow loses its v1 job; the trigger pattern can simplify
+    # then.
+    if: |
+      github.repository == 'PsycherosAI/Psycheros' &&
+      startsWith(github.ref_name, 'launcher-v') &&
+      !startsWith(github.ref_name, 'launcher-v2-v')
     name: launcher
     runs-on: ubuntu-latest
     steps:
@@ -119,6 +128,88 @@ jobs:
             "bundle/${REF}.zip" \
             packages/launcher/install.sh \
             packages/launcher/install.ps1
+
+  launcher-v2:
+    # v2 desktop launcher (Tauri 2 + Rust + HTML/JS). Builds the .dmg
+    # + .app.tar.gz on macOS, uploads to the GitHub release page.
+    # macOS-only for v1.0 — Linux + Windows cross-platform stays
+    # deferred until the supervisor stubs land (see
+    # packages/launcher-v2/docs/supervisors.md). Build is unsigned;
+    # the .dmg requires right-click → Open on Gatekeeper-protected
+    # macOS, documented in the launcher-v2 README.
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'launcher-v2-v')
+    name: launcher-v2
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if gh release view "$REF" >/dev/null 2>&1; then
+            echo "Release $REF already exists; skipping create."
+            exit 0
+          fi
+          # Hardcoded "launcher-v2" — the generic ${REF%-v*} would
+          # strip too aggressively on a `launcher-v2-vX.Y.Z` tag
+          # (yielding "launcher" rather than "launcher-v2").
+          PKG="launcher-v2"
+          VERSION="${REF#${PKG}-v}"
+          NOTES_FILE="$(mktemp)"
+          if .github/scripts/extract-changelog-entry.sh "$PKG" "$VERSION" > "$NOTES_FILE"; then
+            echo "Creating release from packages/${PKG}/CHANGELOG.md entry [$VERSION]."
+            if [ -f ".github/release-footers/$PKG.md" ]; then
+              printf "\n" >> "$NOTES_FILE"
+              cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
+            fi
+            # --latest=false: the v1 launcher owns the repo-wide
+            # "Latest" badge during the transition window per
+            # RELEASES.md. Flip to --latest when v2 reaches feature
+            # parity and v1 is deprecated.
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
+          else
+            echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+          fi
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .deno-version
+
+      - name: Stage sidecar Deno + icons
+        working-directory: packages/launcher-v2
+        run: ./scripts/setup.sh
+
+      - name: Build .dmg + .app.tar.gz (aarch64)
+        working-directory: packages/launcher-v2
+        run: npx --yes @tauri-apps/cli@^2.0 build --target aarch64-apple-darwin
+
+      - name: Upload launcher-v2 assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        working-directory: packages/launcher-v2/src-tauri/target/aarch64-apple-darwin/release/bundle
+        run: |
+          # Tauri 2's bundle output layout:
+          #   bundle/dmg/Psycheros_<version>_aarch64.dmg
+          #   bundle/macos/Psycheros.app.tar.gz   (auto-updater fmt)
+          # We upload both — the .dmg is the user-facing installer,
+          # the .app.tar.gz feeds tauri-plugin-updater when the real
+          # update pipeline lands (§5.19).
+          ls -laR
+          shopt -s nullglob
+          for f in dmg/*.dmg macos/*.app.tar.gz; do
+            echo "Uploading $f"
+            gh release upload "$REF" --clobber "$f"
+          done
 
   entity-core:
     if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'entity-core-v')

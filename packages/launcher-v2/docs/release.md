@@ -18,12 +18,14 @@ Built via `tauri-apps/tauri-action`. Per-job steps:
 
 1. Check out monorepo.
 2. Install Rust + Deno + Node (for `@tauri-apps/cli` if used).
-3. Run `packages/launcher-v2/scripts/bundle-source.sh` — produces
-   `release-bundle.tar.gz` in `src-tauri/resources/`.
-4. Download the Deno binary for this triple, place at
+3. Download the Deno binary for this triple, place at
    `src-tauri/binaries/deno-<triple>` (Tauri sidecar naming).
-5. `cargo tauri build --target <triple>`.
-6. Upload the produced installer to the GitHub Release.
+4. `cargo tauri build --target <triple>`.
+5. Upload the produced installer to the GitHub Release.
+
+Note: the launcher does NOT bundle Psycheros source. Source is cloned from the
+public GitHub repo on first run, pinned to the latest `psycheros-v*` tag at that
+moment. See [`source-provisioning.md`](source-provisioning.md).
 
 ## What CI does NOT do
 
@@ -85,7 +87,8 @@ stable to most users and pre-releases to opted-in testers.
 
 Tauri builds a `.app` and packages it in a `.dmg` for distribution. The `.app`'s
 `Contents/MacOS/Psycheros` is the Rust binary; `Contents/Resources/` holds the
-bundled Deno sidecar, the release-bundle tarball, and icons.
+bundled Deno sidecar and icons. Psycheros source itself isn't shipped — see
+[`source-provisioning.md`](source-provisioning.md).
 
 Min macOS version: 12.0 (set in `tauri.conf.json` →
 `bundle.macOS.minimumSystemVersion`).
@@ -146,7 +149,7 @@ Build a one-platform installer locally:
 
 ```bash
 cd packages/launcher-v2
-./scripts/bundle-source.sh
+./scripts/setup.sh                  # stage sidecar Deno + icons
 npx --yes @tauri-apps/cli@^2.0 build
 ```
 

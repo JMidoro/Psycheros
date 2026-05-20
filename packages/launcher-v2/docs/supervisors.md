@@ -8,19 +8,46 @@ branch on OS.
 ## The trait
 
 ```rust
-trait ServiceSupervisor {
-    fn install(&self, cfg: &DaemonConfig) -> Result<(), SupervisorError>;
+trait ServiceSupervisor: Send + Sync {
+    // Registration — dual-mode (autostart vs manual). Both immediately
+    // start the daemon as a side effect.
+    fn install_autostart(&self, cfg: &DaemonConfig) -> Result<(), SupervisorError>;
+    fn install_manual(&self, cfg: &DaemonConfig) -> Result<(), SupervisorError>;
     fn uninstall(&self) -> Result<(), SupervisorError>;
-    fn is_loaded(&self) -> bool;
+
+    // State queries.
+    fn is_installed(&self) -> bool;   // service definition on disk
+    fn is_loaded(&self) -> bool;      // record active in the OS supervisor
+
+    // Lifecycle.
+    fn start_daemon(&self) -> Result<(), SupervisorError>;
+    fn stop_daemon(&self) -> Result<(), SupervisorError>;
+    fn restart(&self) -> Result<(), SupervisorError>;
+
+    // Reporting surface.
     fn log_paths(&self) -> Vec<PathBuf>;
     fn label(&self) -> &str;
+    fn query_runtime_info(&self) -> RuntimeInfo { RuntimeInfo::default() }
 }
 ```
 
-`install` and `uninstall` are **idempotent**: calling install when already
-installed must succeed (re-loading the plist/unit); calling uninstall when not
-installed must succeed. This makes the manager UI robust against inconsistent
-on-disk state.
+Every method is **idempotent**: calling `install_*` when already installed must
+succeed (overwriting the plist/unit); `uninstall` when not installed must
+succeed; `start_daemon`/`stop_daemon` are no-ops in the already-target state.
+This makes the manager UI robust against inconsistent on-disk state (e.g. plist
+exists but isn't loaded after a crashloop unload).
+
+The autostart-vs-manual split affects only what gets written to the service
+definition. After install, both modes accept the same `start_daemon` /
+`stop_daemon` / `restart` calls — the manager's Start and Stop buttons work
+identically in either mode. The semantic difference shows up at **login time**
+(autostart re-launches; manual stays off) and after a crash (autostart restarts
+via `KeepAlive`; manual does not).
+
+`query_runtime_info` is the only method with a default impl — it returns the
+supervisor's best-effort PID + last-exit-status, and the trait defaults to "no
+info" so platforms whose supervisors can't expose those cheaply don't have to
+implement it.
 
 ## macOS — launchd (full impl)
 
@@ -29,9 +56,11 @@ on-disk state.
 - **Where:** `~/Library/LaunchAgents/ai.psycheros.daemon.plist`
 - **Domain:** user agent (loads at user login, not boot)
 - **Privilege:** none required, ever (no sudo, no auth prompt)
-- **Restart on crash:** `KeepAlive=true`
-- **Start at login:** `RunAtLoad=true` (combined with KeepAlive in v1 semantics;
-  both are set together)
+- **Autostart mode:** `RunAtLoad=true` + `KeepAlive=true` — launches at login
+  and revives on crash.
+- **Manual mode:** `RunAtLoad=false`, `KeepAlive` omitted — only runs when the
+  user explicitly hits Start; stays off across login/logout cycles until they
+  hit Start again.
 - **Logs:** flat files at `StandardOutPath` / `StandardErrorPath` —
   `<data_dir>/logs/daemon.stdout.log` and `daemon.stderr.log`
 - **Status check:** `launchctl list <label>` exit code (0 = loaded, 113 = not
@@ -46,14 +75,19 @@ is small and the format is stable. EnvironmentVariables block sets
 `HOME` and `PATH` (launchd starts processes with no shell context, so PATH must
 be set explicitly or `deno` won't be findable for the MCP subprocess spawn).
 
-### "Stop temporarily" is not a thing
+### Stop semantics
 
-`KeepAlive=true` means `launchctl stop <label>` is a no-op against the daemon —
-launchd revives it within ~2 seconds. The only real off switch is
-`launchctl unload -w`, which we wrap as "Uninstall autostart" in the manager.
-There is no UI affordance for "stop without uninstall," by design. If a user
-wants the daemon temporarily off, they uninstall and re-install when they want
-it back.
+`launchctl stop <label>` is a no-op against `KeepAlive=true` (autostart-mode)
+daemons — launchd revives the process within ~2 seconds. The supervisor's
+`stop_daemon` therefore uses session-scoped `launchctl unload` (no `-w`), which
+detaches the service for the current login session without flipping the
+persistent enable state. The autostart-mode daemon comes back at next login; the
+manual-mode daemon stays off because nothing tells launchd to re-load it. From
+the user's perspective both surfaces share one Stop button with mode-aware copy
+explaining what "Stop" means right now.
+
+`uninstall` uses `launchctl unload -w` to flip the persistent enable state off
+and remove the plist file in one go.
 
 ## Linux — systemd user unit (stub)
 
