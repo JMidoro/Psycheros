@@ -7,6 +7,24 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-05-20
+
+### Fixed
+
+- **macOS bundle now ad-hoc signed at the bundle level** (`tauri.conf.json`).
+  Added `bundle.macOS.signingIdentity: "-"` so Tauri invokes `codesign --sign -`
+  on the final `.app` after embedding the deno sidecar. Before this, the
+  launcher binary carried only Rust's linker-signed stub and the bundle had no
+  `Contents/_CodeSignature/CodeResources` at all. On Apple Silicon that
+  combination is fatal: when a user downloads the `.dmg` from GitHub, Chrome
+  sets `com.apple.quarantine`, AMFI sees no real CMS blob, and the kernel kills
+  the process at launch before Gatekeeper can even prompt — bypassing the
+  familiar "Open Anyway" workflow entirely. Proper ad-hoc signing keeps us in
+  the no-cost / no-Apple-Developer-account posture but produces a signature AMFI
+  accepts, so quarantined launches land on the standard Gatekeeper "cannot
+  verify developer → Open Anyway" path documented in [`README.md`](README.md)
+  and [`docs/release.md`](docs/release.md).
+
 ## [0.1.0] - 2025-05-20
 
 ### Added

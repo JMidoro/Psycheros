@@ -9,6 +9,12 @@ on:
   #     launcher-v0.2.0 shipping unrunnable due to a missing-sibling import)
   #   - every PR targeting main (inbound contribution surface)
   #   - workflow_dispatch (manual retry)
+  #
+  # Both jobs are repo-gated to PsycherosAI/Psycheros — on
+  # PsycherosAI/Psycheros-staging the workflow run starts but every job
+  # skips before any runner spins up (zero billable minutes). Staging
+  # gates run locally before push instead (see the
+  # psycheros-publication skill's pre-publish step).
   push:
     branches: [main]
     tags:
@@ -26,6 +32,7 @@ permissions:
 jobs:
   workspace:
     name: type-check / lint / fmt
+    if: github.repository == 'PsycherosAI/Psycheros'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
