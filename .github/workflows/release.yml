@@ -47,12 +47,9 @@ jobs:
       # to `--generate-notes` only when the CHANGELOG entry is missing /
       # empty (warning emitted).
       #
-      # The launcher owns the repo-wide "Latest" badge — see RELEASES.md
-      # "Latest badge policy". Strangers landing on /releases (and the
-      # `https://github.com/.../releases/latest/download/install.sh`
-      # redirect used by the docs site Getting-Started link) should be
-      # guided to the installer. --latest below sets the badge; the
-      # psycheros-notes job below uses --latest=false for the same reason.
+      # The v1 launcher used to own the repo-wide "Latest" badge.
+      # Now deprecated in favor of launcher-v2 (macOS + Windows).
+      # --latest=false so the v2 launcher's release wins the badge.
       - name: Ensure release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,10 +73,10 @@ jobs:
               printf "\n" >> "$NOTES_FILE"
               cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
             fi
-            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest --verify-tag
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
           else
             echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
-            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
           fi
 
       - name: Stage launcher bundle
@@ -168,14 +165,14 @@ jobs:
               printf "\n" >> "$NOTES_FILE"
               cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
             fi
-            # --latest=false: the v1 launcher owns the repo-wide
-            # "Latest" badge during the transition window per
-            # RELEASES.md. Flip to --latest when v2 reaches feature
-            # parity and v1 is deprecated.
-            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
+            # --latest: the v2 launcher owns the repo-wide "Latest"
+            # badge now that it has shipped cross-platform support
+            # (macOS + Windows). v1 is deprecated; its job uses
+            # --latest=false.
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest --verify-tag
           else
             echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
-            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
           fi
 
       - name: Set up Rust
@@ -214,6 +211,14 @@ jobs:
             echo "Uploading $f"
             gh release upload "$REF" --clobber "$f"
           done
+          # Upload a stable-named duplicate so docs can link to
+          # .../releases/latest/download/Psycheros-macOS-latest.dmg
+          # without breaking on every version bump.
+          dmg_file="$(compgen -G 'dmg/*.dmg' || true)"
+          if [ -n "$dmg_file" ]; then
+            cp "$dmg_file" Psycheros-macOS-latest.dmg
+            gh release upload "$REF" --clobber Psycheros-macOS-latest.dmg
+          fi
 
   launcher-v2-windows:
     # v2 desktop launcher — Windows half. Builds the .msi (WiX) +
@@ -249,10 +254,10 @@ jobs:
               printf "\n" >> "$NOTES_FILE"
               cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
             fi
-            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest --verify-tag
           else
             echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
-            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+            gh release create "$REF" --title "$REF" --generate-notes --latest --verify-tag
           fi
 
       - name: Set up Rust (MSVC toolchain — required by Tauri/WiX on Windows)
@@ -302,6 +307,14 @@ jobs:
             echo "Uploading $f"
             gh release upload "$REF" --clobber "$f"
           done
+          # Upload stable-named duplicates so docs can link to
+          # .../releases/latest/download/Psycheros-Windows-latest.msi
+          # without breaking on every version bump.
+          msi_file="$(compgen -G 'msi/*.msi' || true)"
+          if [ -n "$msi_file" ]; then
+            cp "$msi_file" Psycheros-Windows-latest.msi
+            gh release upload "$REF" --clobber Psycheros-Windows-latest.msi
+          fi
 
   entity-core:
     if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'entity-core-v')
