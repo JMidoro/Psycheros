@@ -1488,10 +1488,11 @@ export function renderChatView(
   const oldestCreatedAt = messages.length > 0
     ? messages[0].createdAt.toISOString()
     : "";
+  const oldestId = messages.length > 0 ? messages[0].id : "";
   const sentinel = hasMoreOlder
     ? `<div id="load-earlier-sentinel" class="load-earlier-sentinel" data-oldest-created-at="${
       escapeHtml(oldestCreatedAt)
-    }">
+    }" data-oldest-id="${escapeHtml(oldestId)}">
     <div class="load-earlier-spinner"></div>
   </div>`
     : "";
@@ -2461,6 +2462,7 @@ export function renderMemoriesView(
     { id: "monthly", label: "Monthly" },
     { id: "yearly", label: "Yearly" },
     { id: "significant", label: "Significant" },
+    { id: "instructions", label: "Instructions" },
   ];
 
   const tabsHtml = tabs.map((tab) => {
@@ -2538,11 +2540,13 @@ export function renderMemoriesView(
  * Render the active tab indicator for memories as an OOB swap.
  */
 function renderMemoryTabActiveState(activeGranularity: string): string {
-  const tabs = [...VALID_MEMORY_GRANULARITIES, "consolidation"];
+  const tabs = [...VALID_MEMORY_GRANULARITIES, "consolidation", "instructions"];
   return tabs.map((g) => {
     const isActive = g === activeGranularity;
     const label = g === "consolidation"
       ? "Catch-up"
+      : g === "instructions"
+      ? "Instructions"
       : g.charAt(0).toUpperCase() + g.slice(1);
     return `<button
       class="settings-tab${isActive ? " active" : ""}"
@@ -2912,7 +2916,7 @@ export function renderLorebooksView(lorebooks: Lorebook[]): string {
     >
       <div class="form-group">
         <label for="lorebook-name">Name</label>
-        <input type="text" id="lorebook-name" name="name" required placeholder="e.g., Character Info" />
+        <input type="text" id="lorebook-name" name="name" required placeholder="e.g., Project Notes" />
       </div>
       <div class="form-group">
         <label for="lorebook-desc">Description (optional)</label>
@@ -2922,10 +2926,10 @@ export function renderLorebooksView(lorebooks: Lorebook[]): string {
     </form>
   </div>`;
 
-  // Import from SillyTavern section
+  // Import section
   html += `<div class="lorebook-import">
-    <h3>Import from SillyTavern</h3>
-    <p class="settings-desc">Upload a SillyTavern lorebook JSON file to create a new context book with all its entries.</p>
+    <h3>Import</h3>
+    <p class="settings-desc">Upload a lorebook JSON file to create a new context book with all its entries.</p>
     <form
       hx-post="/api/lorebooks/import-sillytavern"
       hx-target="#settings-content"
@@ -2996,7 +3000,7 @@ export function renderLorebookDetailView(
       <div class="form-row">
         <div class="form-group">
           <label for="entry-name">Name</label>
-          <input type="text" id="entry-name" name="name" required placeholder="e.g., Character Info" />
+          <input type="text" id="entry-name" name="name" required placeholder="e.g., Meeting Notes" />
         </div>
         <div class="form-group form-group--small">
           <label for="entry-priority">Priority</label>
@@ -4849,9 +4853,17 @@ export function renderConnectionsSettings(
   const wsSettings = webSearchSettings ??
     { provider: "disabled" as const, tavilyApiKey: "", braveApiKey: "" };
   const lvSettings = lovenseSettings ??
-    { enabled: false, connection: { domain: "", port: 34568, secure: true } };
+    {
+      enabled: false,
+      connection: { domain: "", port: 34568, secure: true },
+      customInstructions: "",
+    };
   const bpSettings = buttplugSettings ??
-    { enabled: false, websocketUrl: "ws://127.0.0.1:12345" };
+    {
+      enabled: false,
+      websocketUrl: "ws://127.0.0.1:12345",
+      customInstructions: "",
+    };
 
   return `<div class="settings-view">
   <div class="settings-header">
@@ -5699,6 +5711,19 @@ function renderLovenseTab(
       </div>
     </section>
 
+    <!-- Custom Instructions -->
+    <section class="theme-section">
+      <h3 class="theme-section-title">Custom Instructions</h3>
+      <p class="theme-section-desc">Instructions for me when I'm using connected Lovense devices. Only included in my context when a device is connected.</p>
+      <div class="llm-fields">
+        <div class="llm-field">
+          <textarea id="lovense-custom-instructions" class="input-field llm-input" rows="4" placeholder="e.g. Start slow, ramp up gradually, prefer pattern mode...">${
+    escapeHtml(settings.customInstructions ?? "")
+  }</textarea>
+        </div>
+      </div>
+    </section>
+
     <!-- Actions -->
     <div class="llm-actions">
       <div class="llm-actions-left">
@@ -5745,6 +5770,7 @@ function renderLovenseTab(
       const domain = document.getElementById('lovense-domain')?.value?.trim() ?? '';
       const port = parseInt(document.getElementById('lovense-port')?.value ?? '20010') || 20010;
       const secure = document.getElementById('lovense-secure')?.checked ?? false;
+      const customInstructions = document.getElementById('lovense-custom-instructions')?.value ?? '';
 
       const btn = e.currentTarget;
       btn.disabled = true;
@@ -5754,7 +5780,7 @@ function renderLovenseTab(
       fetch('/api/lovense-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, connection: { domain, port, secure } }),
+        body: JSON.stringify({ enabled, connection: { domain, port, secure }, customInstructions }),
       })
         .then(r => r.json())
         .then(data => {
@@ -5904,6 +5930,19 @@ function renderButtplugTab(
       </div>
     </section>
 
+    <!-- Custom Instructions -->
+    <section class="theme-section">
+      <h3 class="theme-section-title">Custom Instructions</h3>
+      <p class="theme-section-desc">Instructions for me when I'm using connected Intiface devices. Only included in my context when a device is connected.</p>
+      <div class="llm-fields">
+        <div class="llm-field">
+          <textarea id="buttplug-custom-instructions" class="input-field llm-input" rows="4" placeholder="e.g. Start slow, prefer vibration over rotation...">${
+    escapeHtml(settings.customInstructions ?? "")
+  }</textarea>
+        </div>
+      </div>
+    </section>
+
     <!-- Actions -->
     <div class="llm-actions">
       <div class="llm-actions-left">
@@ -5946,6 +5985,7 @@ function renderButtplugTab(
       e.preventDefault();
       const enabled = document.getElementById('buttplug-enabled')?.checked ?? false;
       const websocketUrl = document.getElementById('buttplug-url')?.value?.trim() ?? 'ws://127.0.0.1:12345';
+      const customInstructions = document.getElementById('buttplug-custom-instructions')?.value ?? '';
 
       const btn = e.currentTarget;
       btn.disabled = true;
@@ -5955,7 +5995,7 @@ function renderButtplugTab(
       fetch('/api/buttplug-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, websocketUrl }),
+        body: JSON.stringify({ enabled, websocketUrl, customInstructions }),
       })
         .then(r => r.json())
         .then(data => {
@@ -6113,19 +6153,23 @@ function renderHomeSettingsContent(
   const deviceRows = (settings.devices || []).map((d, i) => `
     <div class="home-device-row" data-index="${i}">
       <div class="home-device-info">
-        <span class="home-device-name">${escapeHtml(d.name)}</span>
+        <div class="home-device-name-row">
+          <span class="home-device-power home-power-unknown" data-power-index="${i}" title="Power state unknown"></span>
+          <span class="home-device-name">${escapeHtml(d.name)}</span>
+        </div>
         <span class="home-device-meta">${escapeHtml(d.type)} &middot; ${
     escapeHtml(d.address)
   }</span>
       </div>
       <div class="home-device-actions">
+        <button class="btn btn--sm home-on-btn" data-index="${i}" title="Turn on (manual override)">On</button>
+        <button class="btn btn--sm home-off-btn" data-index="${i}" title="Turn off (manual override)">Off</button>
         <label class="toggle-label">
           <input type="checkbox" class="home-device-enabled" data-index="${i}" ${
     d.enabled ? "checked" : ""
   }>
           <span class="toggle-slider"></span>
         </label>
-        <button class="btn btn--ghost btn--sm home-test-btn" data-index="${i}" title="Test connection">Test</button>
         <button class="btn btn--ghost btn--sm home-delete-btn" data-index="${i}" title="Remove device">Remove</button>
       </div>
     </div>
@@ -6140,7 +6184,8 @@ function renderHomeSettingsContent(
     <div id="home-device-list" class="home-device-list">
       ${deviceRows}
     </div>
-    <p class="settings-note">After adding devices, also turn on the <code>control_device</code> tool in Settings > Tools.</p>
+    <p class="settings-note">After adding devices, also turn on the <code>control_device</code> tool in Settings > Tools.
+    <br><strong>On/Off buttons</strong> are a manual safety override — they bypass the entity entirely.</p>
     `
       : `
     <div id="home-device-list" class="home-device-list" style="display:none;"></div>
@@ -6184,10 +6229,20 @@ function renderHomeSettingsContent(
     .home-device-list { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-4); }
     .home-device-row { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3); border-radius: 8px; border: 1px solid var(--c-border); background: var(--c-bg); }
     .home-device-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .home-device-name-row { display: flex; align-items: center; gap: 6px; }
     .home-device-name { font-weight: 600; font-size: 14px; color: var(--c-fg); }
     .home-device-meta { font-size: 12px; color: var(--c-fg-dim); }
     .home-device-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
     .btn--sm { padding: 4px 10px; font-size: 12px; }
+    .home-device-power { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .home-power-on { background: #22c55e; box-shadow: 0 0 4px #22c55e80; }
+    .home-power-off { background: #6b7280; }
+    .home-power-unknown { background: #eab308; opacity: 0.6; }
+    .home-power-error { background: #ef4444; }
+    .home-on-btn { background: var(--c-border); color: var(--c-fg); border: 1px solid var(--c-border); }
+    .home-on-btn:hover { background: #22c55e20; border-color: #22c55e; color: #22c55e; }
+    .home-off-btn { background: var(--c-border); color: var(--c-fg); border: 1px solid var(--c-border); }
+    .home-off-btn:hover { background: #ef444420; border-color: #ef4444; color: #ef4444; }
   </style>
 
 <script>
@@ -6213,19 +6268,24 @@ function renderHomeDevices() {
   list.innerHTML = homeDevices.map((d, i) => \`
     <div class="home-device-row" data-index="\${i}">
       <div class="home-device-info">
-        <span class="home-device-name">\${escapeHtml(d.name)}</span>
+        <div class="home-device-name-row">
+          <span class="home-device-power home-power-unknown" data-power-index="\${i}" title="Power state unknown"></span>
+          <span class="home-device-name">\${escapeHtml(d.name)}</span>
+        </div>
         <span class="home-device-meta">\${escapeHtml(d.type)} &middot; \${escapeHtml(d.address)}</span>
       </div>
       <div class="home-device-actions">
+        <button class="btn btn--sm home-on-btn" data-index="\${i}" onclick="controlHomeDevice(\${i}, 'on', event)" title="Turn on (manual override)">On</button>
+        <button class="btn btn--sm home-off-btn" data-index="\${i}" onclick="controlHomeDevice(\${i}, 'off', event)" title="Turn off (manual override)">Off</button>
         <label class="toggle-label">
           <input type="checkbox" class="home-device-enabled" data-index="\${i}" \${d.enabled ? 'checked' : ''} onchange="toggleHomeDevice(\${i}, this.checked)">
           <span class="toggle-slider"></span>
         </label>
-        <button class="btn btn--ghost btn--sm home-test-btn" data-index="\${i}" onclick="testHomeDevice(\${i}, event)" title="Test connection">Test</button>
         <button class="btn btn--ghost btn--sm home-delete-btn" data-index="\${i}" onclick="deleteHomeDevice(\${i}, event)" title="Remove device">Remove</button>
       </div>
     </div>
   \`).join('');
+  refreshAllDeviceStatus();
 }
 
 function escapeHtml(str) {
@@ -6240,6 +6300,79 @@ function showHomeStatus(type, message) {
   el.style.display = 'block';
   el.className = 'llm-status ' + type;
   el.textContent = message;
+}
+
+function setPowerIndicator(index, state) {
+  const dot = document.querySelector('[data-power-index="' + index + '"]');
+  if (!dot) return;
+  dot.className = 'home-device-power';
+  switch (state) {
+    case 'on': dot.classList.add('home-power-on'); dot.title = 'Power: on'; break;
+    case 'off': dot.classList.add('home-power-off'); dot.title = 'Power: off'; break;
+    case 'error': dot.classList.add('home-power-error'); dot.title = 'Unreachable'; break;
+    default: dot.classList.add('home-power-unknown'); dot.title = 'Power state unknown';
+  }
+}
+
+async function controlHomeDevice(index, action, event) {
+  const btn = event.currentTarget;
+  const device = homeDevices[index];
+  if (!device) return;
+
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = action === 'on' ? 'Turning on...' : 'Turning off...';
+  showHomeStatus('loading', (action === 'on' ? 'Turning on' : 'Turning off') + ' ' + device.name + '...');
+
+  try {
+    const resp = await fetch('/api/home-device/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: device.name, action }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      const state = data.powerState || (action === 'on' ? 'on' : 'off');
+      setPowerIndicator(index, state);
+      showHomeStatus('success', device.name + ': ' + data.message);
+    } else {
+      setPowerIndicator(index, 'error');
+      showHomeStatus('error', device.name + ': ' + (data.error || data.message));
+    }
+  } catch (e) {
+    setPowerIndicator(index, 'error');
+    showHomeStatus('error', 'Failed to control ' + device.name + ': ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+async function refreshDeviceStatus(index) {
+  const device = homeDevices[index];
+  if (!device) return;
+  try {
+    const resp = await fetch('/api/home-device/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: device.name, action: 'status' }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      const msg = data.message || '';
+      if (msg.includes('power is on')) setPowerIndicator(index, 'on');
+      else if (msg.includes('power is off')) setPowerIndicator(index, 'off');
+      else setPowerIndicator(index, 'unknown');
+    } else {
+      setPowerIndicator(index, 'error');
+    }
+  } catch {
+    setPowerIndicator(index, 'error');
+  }
+}
+
+function refreshAllDeviceStatus() {
+  homeDevices.forEach((_, i) => refreshDeviceStatus(i));
 }
 
 function addHomeDevice(event) {
@@ -6288,27 +6421,30 @@ function deleteHomeDevice(index, event) {
 }
 
 async function testHomeDevice(index, event) {
-  const btn = event.currentTarget;
   const device = homeDevices[index];
   if (!device) return;
 
-  btn.disabled = true;
-  btn.textContent = 'Testing...';
-  showHomeStatus('loading', 'Testing connection to ' + device.address + '...');
+  showHomeStatus('loading', 'Querying ' + device.name + '...');
 
   try {
-    const resp = await fetch('http://' + device.address + '/relay/0', { signal: AbortSignal.timeout(5000) });
-    if (resp.ok) {
-      const data = await resp.json();
-      showHomeStatus('success', device.name + ' at ' + device.address + ': power is ' + (data.ison ? 'on' : 'off'));
+    const resp = await fetch('/api/home-device/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: device.name, action: 'status' }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      const msg = data.message || '';
+      if (msg.includes('power is on')) setPowerIndicator(index, 'on');
+      else if (msg.includes('power is off')) setPowerIndicator(index, 'off');
+      showHomeStatus('success', device.name + ': ' + data.message);
     } else {
-      showHomeStatus('error', 'Device responded with status ' + resp.status);
+      setPowerIndicator(index, 'error');
+      showHomeStatus('error', device.name + ': ' + (data.error || data.message));
     }
   } catch (e) {
-    showHomeStatus('error', 'Could not reach ' + device.address + ': ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Test';
+    setPowerIndicator(index, 'error');
+    showHomeStatus('error', 'Could not reach ' + device.name + ': ' + e.message);
   }
 }
 
@@ -6337,6 +6473,8 @@ async function saveHomeSettings(event) {
     btn.textContent = 'Save Settings';
   }
 }
+
+refreshAllDeviceStatus();
 </script>`;
 }
 
@@ -6727,6 +6865,51 @@ export function renderConsolidationComplete(
         hx-swap="outerHTML"
       >Refresh Status</button>
     </div>
+  </div>
+</div>`;
+}
+
+// =============================================================================
+// Memory Instructions Tab Template
+// =============================================================================
+
+/**
+ * Render the custom daily memory-writing instructions tab.
+ *
+ * The entity follows these instructions when writing daily memories.
+ * Written from the entity's first-person perspective.
+ */
+export function renderInstructionsTab(dailyInstructions: string): string {
+  const oobTabs = renderMemoryTabActiveState("instructions");
+
+  return `${oobTabs}
+<div id="instructions-content">
+  <div class="consolidation-section">
+    <h1 class="settings-title">Custom Daily Memory Instructions</h1>
+    <p class="settings-note" style="margin-bottom:1rem;">
+      Additional instructions for the Daily Memory writer. Write in the first person from the entity's perspective, such as "I do not include vitamin reminders in my daily memories" or "When writing daily memories, I name specific songs or artists that came up".
+    </p>
+    <form
+      class="settings-editor-form"
+      hx-post="/api/memories/instructions"
+      hx-target="#instructions-save-status"
+      hx-swap="innerHTML"
+    >
+      <div class="llm-field">
+        <textarea
+          class="settings-textarea"
+          name="dailyInstructions"
+          rows="8"
+          placeholder="e.g. I do not include vitamin reminders in my daily memories. I always mention how I felt about creative projects. When I remember conversations about music, I name specific songs or artists that came up."
+        >${escapeHtml(dailyInstructions)}</textarea>
+      </div>
+      <div class="consolidation-actions" style="margin-top:1rem;">
+        <button class="btn btn--primary" type="submit">
+          Save Instructions
+        </button>
+        <span id="instructions-save-status"></span>
+      </div>
+    </form>
   </div>
 </div>`;
 }

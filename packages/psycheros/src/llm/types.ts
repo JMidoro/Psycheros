@@ -80,6 +80,7 @@ export interface ChatRequest {
   tool_choice?: "auto";
   temperature?: number;
   max_tokens?: number;
+  max_completion_tokens?: number;
   top_p?: number;
   top_k?: number;
   frequency_penalty?: number;

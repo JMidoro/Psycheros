@@ -100,6 +100,17 @@ fn inject_toast(handle: &AppHandle, info: &UpdateInfo) {
         return;
     };
 
+    // The toast's "press <chord> to install" hint needs the platform-
+    // appropriate modifier glyph: ⌘ on macOS, Ctrl on Windows/Linux.
+    // Hardcoding ⌘ in the template made the Windows toast tell users
+    // to press a chord that doesn't exist on their keyboard. We pick
+    // the literal at Rust-format time rather than letting JS sniff
+    // navigator.platform because the launcher already knows its host.
+    #[cfg(target_os = "macos")]
+    let install_hint = "Press \u{2318}, to install";
+    #[cfg(not(target_os = "macos"))]
+    let install_hint = "Press Ctrl+, to install";
+
     // Interpolated values are tag names (`psycheros-v` + semver) or
     // safe literal fallbacks — no untrusted input.
     let js = format!(
@@ -119,7 +130,7 @@ fn inject_toast(handle: &AppHandle, info: &UpdateInfo) {
   version.textContent = '{current} → {latest}';
   var hint = document.createElement('div');
   hint.style.cssText = 'color:#888;font-size:12px';
-  hint.textContent = 'Press ⌘, to install';
+  hint.textContent = '{install_hint}';
   content.appendChild(title);
   content.appendChild(version);
   content.appendChild(hint);

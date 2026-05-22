@@ -58,9 +58,11 @@ data/
 ```
 
 `graph.db` doubles as the embedding cache (content-hash invalidated), so the
-graph extension and the embedding cache share the same db file. The `sqlite-vec`
-extension auto-downloads from GitHub releases on first use — implemented in
-`src/graph/store.ts`.
+graph extension and the embedding cache share the same db file. Long memories
+(>3000 chars) are split into ~2048-char overlapping chunks, each embedded
+independently — see `src/embeddings/chunker.ts`. Short memories get a single
+embedding. The `sqlite-vec` extension auto-downloads from GitHub releases on
+first use — implemented in `src/graph/store.ts`.
 
 ## Snapshots are load-bearing
 

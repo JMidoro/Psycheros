@@ -17,11 +17,14 @@ The launcher builds on four targets:
 Built via `tauri-apps/tauri-action`. Per-job steps:
 
 1. Check out monorepo.
-2. Install Rust + Deno + Node (for `@tauri-apps/cli` if used).
+2. Install Rust (MSVC toolchain on Windows) + Deno + Node (for `@tauri-apps/cli`
+   if used).
 3. Download the Deno binary for this triple, place at
    `src-tauri/binaries/deno-<triple>` (Tauri sidecar naming).
-4. `cargo tauri build --target <triple>`.
-5. Upload the produced installer to the GitHub Release.
+4. Windows only: build + stage the daemon-runner sidecar (`scripts/setup.ps1`
+   handles this — see "Pre-build step" below).
+5. `cargo tauri build --target <triple>`.
+6. Upload the produced installer to the GitHub Release.
 
 Note: the launcher does NOT bundle Psycheros source. Source is cloned from the
 public GitHub repo on first run, pinned to the latest `psycheros-v*` tag at that
@@ -100,6 +103,33 @@ handles Start Menu shortcut, uninstaller registration. The `.exe` is the same
 binary, useful for users who prefer not to install.
 
 WiX language: `en-US` (single-locale for now).
+
+#### The daemon-runner sidecar — auto-bundled, not staged
+
+Windows ships a second binary alongside the launcher:
+`psycheros-daemon-runner.exe`, a Cargo `[[bin]]` target in the same crate
+(`src-tauri/src/bin/psycheros-daemon-runner.rs`). It supervises the deno daemon
+via a Win32 Job Object so `schtasks /End` reliably cascades the kill — see
+[`supervisors.md`](supervisors.md) for why.
+
+No special staging step is needed. `cargo tauri build` runs `cargo build` first,
+which compiles every `[[bin]]` target in the crate; Tauri's bundler then
+auto-includes `target/release/psycheros-daemon-runner.exe` in the MSI alongside
+the main launcher exe. At runtime the supervisor resolves the runner via
+`current_exe().parent().join(...)` — works for both dev (`target/debug/`
+siblings) and prod (INSTALLDIR siblings).
+
+`scripts/setup.ps1` is the Windows equivalent of `setup.sh`: it stages the deno
+sidecar (via `externalBin`) and verifies committed icons are present. It does
+**not** stage the daemon-runner — an earlier version did, but that caused a WiX
+duplicate-component error because Tauri was including the runner twice (once via
+`externalBin`, once via auto-include from `target/release/`). See
+[`CLAUDE.md`'s "Don't add the daemon-runner as an
+externalBin" trap entry](../CLAUDE.md).
+
+CI mirrors this in `.github/workflows/release.yml`'s `launcher-v2-windows` job:
+install Rust (MSVC) + Deno, run `setup.ps1`, run `cargo tauri build`, upload the
+resulting `.msi` and `.exe`.
 
 ### Linux — `.AppImage` + `.deb`
 

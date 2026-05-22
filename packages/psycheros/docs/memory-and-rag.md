@@ -120,6 +120,20 @@ prevents high-volume channels from blowing out the daily memory context window.
   (e.g., "superdog420 is James"), written in first-person from the entity's
   perspective
 
+### Custom Daily Memory Instructions
+
+Users can configure additional instructions that the entity follows when writing
+daily memories. These are stored in `.psycheros/memory-settings.json` as
+`{ dailyInstructions: string }` and injected into the daily summarization prompt
+between the base guidelines and the conversation data.
+
+Instructions are written in first-person from the entity's perspective (e.g., "I
+do not include vitamin reminders in my daily memories"). They are
+Psycheros-specific — different embodiments can have different memory-writing
+directives. The field defaults to empty (no custom instructions).
+
+Configured via the **Instructions** tab in Settings → Memories.
+
 **Exclusions:**
 
 - Discord messages are excluded from Chat RAG embedding (they get their own
@@ -321,9 +335,9 @@ configurable duration and re-trigger behavior.
 
 **Entity tools:**
 
-| Tool    | Description                                                |
-| ------- | ---------------------------------------------------------- |
-| `vault` | Manage vault documents (write, read, append, list, search) |
+| Tool    | Description                                                         |
+| ------- | ------------------------------------------------------------------- |
+| `vault` | Manage vault documents (write, read, append, rewrite, list, search) |
 
 ### Vector Search Backend
 
@@ -346,6 +360,7 @@ configurable duration and re-trigger behavior.
 | `src/memory/trigger.ts`            | Startup catch-up, orphan repair, cron setup                                                                |
 | `src/memory/file-writer.ts`        | Content formatting utilities (extractChatIds, formatMemoryContent)                                         |
 | `src/memory/types.ts`              | Memory types, date formatting, instance tagging                                                            |
+| `src/memory/memory-settings.ts`    | Load/save custom daily memory instructions (`.psycheros/memory-settings.json`)                             |
 | `src/memory/date-utils.ts`         | Timezone-aware logical date helpers for message grouping                                                   |
 | `src/mcp-client/mod.ts`            | MCP client — createMemory, readMemory, searchMemories, listMemories, deleteMemory, updateMemory            |
 | `src/rag/mod.ts`                   | RAG retrieval system (chat, vault, graph — memory RAG removed)                                             |

@@ -1,11 +1,16 @@
 [package]
 name = "psycheros-launcher"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Psycheros desktop launcher — Tauri app + OS-supervised daemon"
 license = "MIT"
 publish = false
 rust-version = "1.77"
+# Required because we ship a second [[bin]] target alongside the
+# launcher (psycheros-daemon-runner). Without default-run, `cargo run`
+# and `cargo tauri dev` (which shells out to `cargo run` under the
+# hood) can't pick which binary to launch.
+default-run = "psycheros-launcher"
 
 [lib]
 name = "psycheros_launcher_lib"
@@ -15,6 +20,20 @@ path = "src/lib.rs"
 [[bin]]
 name = "psycheros-launcher"
 path = "src/main.rs"
+
+# Windows-only sidecar binary. Used as the Task Scheduler action target
+# (in place of a .cmd wrapper) so a) no console window flashes up at
+# daemon start, and b) `schtasks /End` reliably kills the deno child
+# via a Win32 Job Object with KILL_ON_JOB_CLOSE. See
+# src/bin/psycheros-daemon-runner.rs.
+#
+# Built on every platform (the [[bin]] entry can't be cfg'd at the
+# Cargo level), but the source file is `#[cfg(target_os = "windows")]`
+# guarded so it compiles to a no-op shim on macOS/Linux. The launcher's
+# supervisor only references the binary on Windows.
+[[bin]]
+name = "psycheros-daemon-runner"
+path = "src/bin/psycheros-daemon-runner.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -30,6 +49,14 @@ tauri-plugin-updater = "2"
 # paths the Rust side can read directly — avoiding the 8x bloat of
 # passing 100MB+ zips through the JSON-serialized IPC layer.
 tauri-plugin-dialog = "2"
+# Menu accelerators on Windows don't fire when the webview has focus —
+# WebView2 captures keyboard events before they propagate to the host's
+# menu chain. Tauri's global-shortcut plugin registers OS-level hotkeys
+# that fire regardless of which window owns keyboard focus. We gate on
+# `window.is_focused()` inside the handler so the shortcut only flips
+# the launcher's view-mode when the user is actually looking at the app,
+# matching the menu-accelerator semantic on macOS.
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cross-platform path resolution (data_dir, cache_dir, etc.) so the launcher
@@ -54,6 +81,19 @@ tauri-plugin-webdriver = { version = "0.2", optional = true }
 [dev-dependencies]
 # Hermetic temp dirs for bundle-module unit tests (clone/stage/warm).
 tempfile = "3"
+
+# Windows-only: raw Win32 bindings for the psycheros-daemon-runner
+# sidecar (Job Object APIs + CREATE_NO_WINDOW). windows-sys is already
+# in the transitive tree via tauri; we pin a direct dep for the runner's
+# explicit needs. Kept under a target-cfg so non-Windows builds don't
+# pay the dep weight.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [features]
 default = []

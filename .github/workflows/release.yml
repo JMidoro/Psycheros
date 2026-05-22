@@ -129,16 +129,20 @@ jobs:
             packages/launcher/install.sh \
             packages/launcher/install.ps1
 
-  launcher-v2:
-    # v2 desktop launcher (Tauri 2 + Rust + HTML/JS). Builds the .dmg
-    # + .app.tar.gz on macOS, uploads to the GitHub release page.
-    # macOS-only for v1.0 — Linux + Windows cross-platform stays
-    # deferred until the supervisor stubs land (see
-    # packages/launcher-v2/docs/supervisors.md). Build is unsigned;
-    # the .dmg requires right-click → Open on Gatekeeper-protected
-    # macOS, documented in the launcher-v2 README.
+  launcher-v2-macos:
+    # v2 desktop launcher (Tauri 2 + Rust + HTML/JS) — macOS half.
+    # Builds the .dmg + .app.tar.gz on macOS, uploads to the GitHub
+    # release page. Pairs with `launcher-v2-windows` below to attach
+    # both platforms' artifacts to the same release tag (the
+    # "Ensure release exists" step is race-safe via `gh release
+    # view` — whichever job arrives first creates the release; the
+    # other skips). Build is unsigned; the .dmg requires
+    # right-click → Open on Gatekeeper-protected macOS, documented
+    # in the launcher-v2 README. Linux cross-platform stays deferred
+    # until the systemd-user supervisor stub lands (see
+    # packages/launcher-v2/docs/supervisors.md).
     if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'launcher-v2-v')
-    name: launcher-v2
+    name: launcher-v2 (macOS)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
@@ -207,6 +211,94 @@ jobs:
           ls -laR
           shopt -s nullglob
           for f in dmg/*.dmg macos/*.app.tar.gz; do
+            echo "Uploading $f"
+            gh release upload "$REF" --clobber "$f"
+          done
+
+  launcher-v2-windows:
+    # v2 desktop launcher — Windows half. Builds the .msi (WiX) +
+    # standalone .exe (NSIS), uploads to the same GitHub release the
+    # macOS job creates. Both jobs gate on `launcher-v2-v*` tags and
+    # both run "Ensure release exists" defensively — whichever wins
+    # the race creates the release, the other skips via
+    # `gh release view`. Build is unsigned; users see SmartScreen on
+    # first launch and click "More info → Run anyway." Documented in
+    # the launcher-v2 README + docs/release.md.
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'launcher-v2-v')
+    name: launcher-v2 (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$REF" >/dev/null 2>&1; then
+            echo "Release $REF already exists; skipping create."
+            exit 0
+          fi
+          PKG="launcher-v2"
+          VERSION="${REF#${PKG}-v}"
+          NOTES_FILE="$(mktemp)"
+          if .github/scripts/extract-changelog-entry.sh "$PKG" "$VERSION" > "$NOTES_FILE"; then
+            echo "Creating release from packages/${PKG}/CHANGELOG.md entry [$VERSION]."
+            if [ -f ".github/release-footers/$PKG.md" ]; then
+              printf "\n" >> "$NOTES_FILE"
+              cat ".github/release-footers/$PKG.md" >> "$NOTES_FILE"
+            fi
+            gh release create "$REF" --title "$REF" --notes-file "$NOTES_FILE" --latest=false --verify-tag
+          else
+            echo "::warning::Falling back to --generate-notes for $REF (no CHANGELOG entry)."
+            gh release create "$REF" --title "$REF" --generate-notes --latest=false --verify-tag
+          fi
+
+      - name: Set up Rust (MSVC toolchain — required by Tauri/WiX on Windows)
+        uses: dtolnay/rust-toolchain@stable
+        # No `targets:` — windows-latest's default host triple is
+        # x86_64-pc-windows-msvc which is what we want.
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .deno-version
+
+      - name: Stage sidecar Deno + verify icons (setup.ps1)
+        # The Windows equivalent of setup.sh — stages the deno
+        # sidecar into src-tauri/binaries/ and confirms the
+        # committed icons are present. The daemon-runner sidecar
+        # isn't staged here; it's a [[bin]] target that Tauri's
+        # bundler picks up from target/release/ automatically (see
+        # packages/launcher-v2/CLAUDE.md "Don't add the
+        # daemon-runner as an externalBin").
+        working-directory: packages/launcher-v2
+        shell: pwsh
+        run: ./scripts/setup.ps1
+
+      - name: Build .msi + .exe (x86_64-pc-windows-msvc)
+        working-directory: packages/launcher-v2
+        shell: pwsh
+        run: npx --yes "@tauri-apps/cli@^2.0" build
+
+      - name: Upload launcher-v2 Windows assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        working-directory: packages/launcher-v2/src-tauri/target/release/bundle
+        shell: bash
+        run: |
+          # Tauri 2's Windows bundle output layout:
+          #   bundle/msi/Psycheros_<version>_x64_en-US.msi
+          #   bundle/nsis/Psycheros_<version>_x64-setup.exe
+          # We upload both — the .msi is the canonical Windows
+          # installer (handles Start Menu shortcut + uninstaller
+          # registration via WiX); the .exe is a standalone NSIS
+          # bundle for users who prefer a single-file install.
+          ls -laR
+          shopt -s nullglob
+          for f in msi/*.msi nsis/*.exe; do
             echo "Uploading $f"
             gh release upload "$REF" --clobber "$f"
           done

@@ -43,6 +43,8 @@ import { generateImageTool } from "./generate-image.ts";
 import { describeImageTool } from "./describe-image.ts";
 // Look closer tool
 import { lookCloserTool } from "./look-closer.ts";
+// Conversation peek tool
+import { conversationPeekTool } from "./conversation-peek.ts";
 
 // =============================================================================
 // Available Tools Catalog
@@ -89,6 +91,8 @@ export const AVAILABLE_TOOLS: Record<string, Tool> = {
   generate_image: generateImageTool,
   describe_image: describeImageTool,
   look_closer: lookCloserTool,
+  // Conversation peek
+  conversation_peek: conversationPeekTool,
 };
 
 /**

@@ -63,17 +63,17 @@ The `deviceType` field is used by the Situational Awareness system.
 
 ### Conversations
 
-| Method   | Path                                        | Description                                          |
-| -------- | ------------------------------------------- | ---------------------------------------------------- |
-| `GET`    | `/api/conversations`                        | List conversations                                   |
-| `POST`   | `/api/conversations`                        | Create conversation                                  |
-| `GET`    | `/api/conversations/:id/messages`           | Get messages                                         |
-| `GET`    | `/api/conversations/:id/messages/paginated` | Get paginated messages (query: `before`, `limit`)    |
-| `GET`    | `/api/conversations/:id/context`            | Get all context snapshots                            |
-| `GET`    | `/api/conversations/:id/context/latest`     | Get latest context snapshot                          |
-| `PATCH`  | `/api/conversations/:id/title`              | Update title (auto-deduplicates with numeric suffix) |
-| `DELETE` | `/api/conversations/:id`                    | Delete conversation                                  |
-| `DELETE` | `/api/conversations`                        | Batch delete conversations                           |
+| Method   | Path                                        | Description                                                   |
+| -------- | ------------------------------------------- | ------------------------------------------------------------- |
+| `GET`    | `/api/conversations`                        | List conversations                                            |
+| `POST`   | `/api/conversations`                        | Create conversation                                           |
+| `GET`    | `/api/conversations/:id/messages`           | Get messages                                                  |
+| `GET`    | `/api/conversations/:id/messages/paginated` | Get paginated messages (query: `before`, `beforeId`, `limit`) |
+| `GET`    | `/api/conversations/:id/context`            | Get all context snapshots                                     |
+| `GET`    | `/api/conversations/:id/context/latest`     | Get latest context snapshot                                   |
+| `PATCH`  | `/api/conversations/:id/title`              | Update title (auto-deduplicates with numeric suffix)          |
+| `DELETE` | `/api/conversations/:id`                    | Delete conversation                                           |
+| `DELETE` | `/api/conversations`                        | Batch delete conversations                                    |
 
 ### Messages
 
@@ -117,19 +117,19 @@ The `deviceType` field is used by the Situational Awareness system.
 
 ### Lorebooks
 
-| Method   | Path                                   | Description                                       |
-| -------- | -------------------------------------- | ------------------------------------------------- |
-| `GET`    | `/api/lorebooks`                       | List all lorebooks                                |
-| `POST`   | `/api/lorebooks`                       | Create new lorebook                               |
-| `GET`    | `/api/lorebooks/:id`                   | Get specific lorebook                             |
-| `PUT`    | `/api/lorebooks/:id`                   | Update lorebook                                   |
-| `DELETE` | `/api/lorebooks/:id`                   | Delete lorebook                                   |
-| `GET`    | `/api/lorebooks/:id/entries`           | List lorebook entries                             |
-| `POST`   | `/api/lorebooks/:id/entries`           | Create lorebook entry                             |
-| `PUT`    | `/api/lorebooks/:id/entries/:entryId`  | Update lorebook entry                             |
-| `DELETE` | `/api/lorebooks/:id/entries/:entryId`  | Delete lorebook entry                             |
-| `DELETE` | `/api/lorebooks/state/:conversationId` | Reset lorebook state                              |
-| `POST`   | `/api/lorebooks/import-sillytavern`    | Import SillyTavern lorebook (multipart JSON file) |
+| Method   | Path                                   | Description               |
+| -------- | -------------------------------------- | ------------------------- |
+| `GET`    | `/api/lorebooks`                       | List all lorebooks        |
+| `POST`   | `/api/lorebooks`                       | Create new lorebook       |
+| `GET`    | `/api/lorebooks/:id`                   | Get specific lorebook     |
+| `PUT`    | `/api/lorebooks/:id`                   | Update lorebook           |
+| `DELETE` | `/api/lorebooks/:id`                   | Delete lorebook           |
+| `GET`    | `/api/lorebooks/:id/entries`           | List lorebook entries     |
+| `POST`   | `/api/lorebooks/:id/entries`           | Create lorebook entry     |
+| `PUT`    | `/api/lorebooks/:id/entries/:entryId`  | Update lorebook entry     |
+| `DELETE` | `/api/lorebooks/:id/entries/:entryId`  | Delete lorebook entry     |
+| `DELETE` | `/api/lorebooks/state/:conversationId` | Reset lorebook state      |
+| `POST`   | `/api/lorebooks/import-sillytavern`    | Import lorebook JSON file |
 
 ### Knowledge Graph
 
@@ -233,14 +233,22 @@ Settings stored in `.psycheros/discord-settings.json`. Shape:
 
 ### Home Settings
 
-| Method | Path                 | Description                                            |
-| ------ | -------------------- | ------------------------------------------------------ |
-| `GET`  | `/api/home-settings` | Get current home device settings                       |
-| `POST` | `/api/home-settings` | Save home device settings and hot-reload tool registry |
+| Method | Path                       | Description                                            |
+| ------ | -------------------------- | ------------------------------------------------------ |
+| `GET`  | `/api/home-settings`       | Get current home device settings                       |
+| `POST` | `/api/home-settings`       | Save home device settings and hot-reload tool registry |
+| `POST` | `/api/home-device/control` | Direct device control — manual safety override         |
 
 Settings stored in `.psycheros/home-settings.json`. Shape:
 `{ "devices": Array<{ name: string, type: string, address: string, enabled: boolean }> }`.
 The `control_device` tool is auto-enabled when any device has `enabled: true`.
+
+**Manual override (`POST /api/home-device/control`):** Bypasses the entity/LLM
+loop entirely. Request body:
+`{ name: string, action: "on" | "off" | "status" }`. Works on any configured
+device regardless of its `enabled` state — this is an emergency shutoff for
+cases where the entity is malfunctioning. Returns
+`{ success, message, powerState? }`.
 
 ### Lovense Settings
 
@@ -252,11 +260,13 @@ The `control_device` tool is auto-enabled when any device has `enabled: true`.
 | `GET`  | `/api/lovense-status`        | Quick connection check for header icon (3s timeout), returns `{ connected, toy? }` |
 
 Settings stored in `.psycheros/lovense-settings.json`. Shape:
-`{ "enabled": boolean, "connection": { "domain": string, "port": number, "secure": boolean } }`.
+`{ "enabled": boolean, "connection": { "domain": string, "port": number, "secure": boolean }, "customInstructions": string }`.
 Supports two modes: LAN Mode (port 20010, HTTP) and Game Mode (port 34568 mobile
 / 30010 PC, HTTPS). Domain format: `192-168-X-X.lovense.club` (dashes, not
 dots). The `control_lovense` tool is auto-enabled when `enabled: true` and
-domain is set. Settings page auto-reloads after save.
+domain is set. `customInstructions` is injected into the entity's context as a
+`<lovense_preferences>` block inside situational awareness, but only when a
+Lovense device is actually connected. Settings page auto-reloads after save.
 
 ### Buttplug (Universal) Settings
 
@@ -268,10 +278,13 @@ domain is set. Settings page auto-reloads after save.
 | `GET`  | `/api/buttplug-status`        | Quick connection check for header icon (2s timeout), returns `{ connected, deviceCount?, devices? }` |
 
 Settings stored in `.psycheros/buttplug-settings.json`. Shape:
-`{ "enabled": boolean, "websocketUrl": string }`. Connects to Intiface Central
-over WebSocket (default `ws://127.0.0.1:12345`). The `control_toy` tool is
-auto-enabled when `enabled: true`. Both Lovense and Buttplug status are polled
-for the intimacy heart icon in the header.
+`{ "enabled": boolean, "websocketUrl": string, "customInstructions": string }`.
+Connects to Intiface Central over WebSocket (default `ws://127.0.0.1:12345`).
+The `control_toy` tool is auto-enabled when `enabled: true`.
+`customInstructions` is injected into the entity's context as a
+`<toy_preferences>` block inside situational awareness, but only when an
+Intiface device is actually connected. Both Lovense and Buttplug status are
+polled for the intimacy heart icon in the header.
 
 ### Image Gen Settings
 

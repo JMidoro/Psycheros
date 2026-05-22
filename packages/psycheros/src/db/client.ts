@@ -609,7 +609,7 @@ export class DBClient {
    */
   getMessagesPaginated(
     conversationId: string,
-    options?: { before?: string; limit?: number },
+    options?: { before?: string; beforeId?: string; limit?: number },
   ): { messages: Message[]; hasMore: boolean } {
     const limit = options?.limit ?? 50;
 
@@ -620,14 +620,27 @@ export class DBClient {
       // Scroll-back load: fetch the N most recent messages strictly older than
       // the cursor (DESC), so the batch hugs the cursor instead of jumping to
       // the oldest end of the range. Reversed below for display order.
+      // Uses id as a tiebreaker when messages share the same created_at.
+      const hasTiebreaker = !!options.beforeId;
       query = `SELECT id, conversation_id, role, content, reasoning_content,
                       tool_call_id, tool_calls, created_at, edited_at,
                       pulse_id, pulse_name
                FROM messages
-               WHERE conversation_id = ? AND created_at < ?
+               WHERE conversation_id = ?
+                 AND (created_at < ?${
+        hasTiebreaker ? " OR (created_at = ? AND id < ?)" : ""
+      })
                ORDER BY created_at DESC
                LIMIT ?`;
-      params = [conversationId, options.before, limit + 1];
+      params = hasTiebreaker
+        ? [
+          conversationId,
+          options.before,
+          options.before,
+          options.beforeId!,
+          limit + 1,
+        ]
+        : [conversationId, options.before, limit + 1];
     } else {
       // Initial load: fetch the most recent messages (DESC). Reversed below.
       query = `SELECT id, conversation_id, role, content, reasoning_content,

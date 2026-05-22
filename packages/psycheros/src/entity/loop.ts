@@ -72,6 +72,8 @@ function escapeXml(str: string): string {
  */
 function formatConnectedDevices(
   snapshot: import("../server/device-cache.ts").DeviceCacheSnapshot,
+  lovenseSettings?: import("../llm/lovense-settings.ts").LovenseSettings,
+  buttplugSettings?: import("../llm/buttplug-settings.ts").ButtplugSettings,
 ): string | undefined {
   const parts: string[] = [];
 
@@ -123,7 +125,29 @@ function formatConnectedDevices(
 
   if (parts.length === 0) return undefined;
 
-  return `  <connected_devices>\n${parts.join("\n")}\n  </connected_devices>`;
+  let result = `  <connected_devices>\n${
+    parts.join("\n")
+  }\n  </connected_devices>`;
+
+  // Inject custom instructions only when matching devices are connected
+  if (
+    snapshot.lovense.connected && snapshot.lovense.toys.length > 0 &&
+    lovenseSettings?.customInstructions?.trim()
+  ) {
+    result += `\n  <lovense_preferences>${
+      escapeXml(lovenseSettings.customInstructions.trim())
+    }</lovense_preferences>`;
+  }
+  if (
+    snapshot.intiface.connected && snapshot.intiface.devices.length > 0 &&
+    buttplugSettings?.customInstructions?.trim()
+  ) {
+    result += `\n  <toy_preferences>${
+      escapeXml(buttplugSettings.customInstructions.trim())
+    }</toy_preferences>`;
+  }
+
+  return result;
 }
 
 /**
@@ -648,7 +672,11 @@ export class EntityTurn {
 
     // Get connected devices snapshot from cache (zero latency)
     const deviceSection = this.config.deviceStatusCache
-      ? formatConnectedDevices(this.config.deviceStatusCache.getSnapshot())
+      ? formatConnectedDevices(
+        this.config.deviceStatusCache.getSnapshot(),
+        this.config.lovenseSettings,
+        this.config.buttplugSettings,
+      )
       : undefined;
 
     if (

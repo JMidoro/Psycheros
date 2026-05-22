@@ -83,7 +83,7 @@ Changes hot-reload the tool registry without a restart.
 | `maintain_identity`         | Full identity file maintenance (append, prepend, update_section, rewrite_section)                      |
 | `list_identity_snapshots`   | View available backups                                                                                 |
 | `custom_identity_file`      | Create and modify custom identity files (create, append, prepend, update_section, rewrite_section)     |
-| `vault`                     | Manage vault documents (write, read, append, list, search)                                             |
+| `vault`                     | Manage vault documents (write, read, append, rewrite, list, search)                                    |
 | `web_search`                | Search the web via Tavily or Brave (auto-enabled when web search provider is set)                      |
 | `pulse`                     | Manage Pulses (create, trigger, delete)                                                                |
 | `send_discord_dm`           | Send a Discord DM to the user (auto-enabled when bot token is configured)                              |

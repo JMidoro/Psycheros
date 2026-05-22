@@ -12,6 +12,7 @@ import type { Granularity, MemoryEntry } from "../types.ts";
 import { getEmbedder } from "../embeddings/mod.ts";
 import type { EmbeddingCache } from "../embeddings/mod.ts";
 import { computeMemoryKey } from "../embeddings/mod.ts";
+import { chunkContent, shouldChunk } from "../embeddings/chunker.ts";
 
 /**
  * Schema for memory granularity.
@@ -409,6 +410,7 @@ async function vectorSearch(
     graphBoost: number;
     instanceScore: number;
     finalScore: number;
+    chunkIndex: number;
   }> = [];
 
   if (cache && cache.isAvailable() && cache.getStats().totalCached > 0) {
@@ -417,7 +419,7 @@ async function vectorSearch(
     const knnCount = Math.max(maxResults * 20, 200);
     const mergedCandidates = new Map<
       string,
-      { memoryKey: string; score: number }
+      { memoryKey: string; score: number; chunkIndex: number }
     >();
 
     for (const queryEmbedding of queryEmbeddings) {
@@ -425,7 +427,11 @@ async function vectorSearch(
       for (const candidate of candidates) {
         const existing = mergedCandidates.get(candidate.memoryKey);
         if (!existing || candidate.score > existing.score) {
-          mergedCandidates.set(candidate.memoryKey, candidate);
+          mergedCandidates.set(candidate.memoryKey, {
+            memoryKey: candidate.memoryKey,
+            score: candidate.score,
+            chunkIndex: candidate.chunkIndex,
+          });
         }
       }
     }
@@ -484,32 +490,59 @@ async function vectorSearch(
         graphBoost,
         instanceScore,
         finalScore,
+        chunkIndex: candidate.chunkIndex,
       });
     }
   } else {
-    // FALLBACK: Embed all memories (current behavior), but cache as we go
+    // FALLBACK: Embed all memories, chunking long ones
     for (const granularity of granularities) {
       const memories = await store.listMemories(granularity);
 
       for (const memory of memories) {
-        const content = memory.content.substring(0, 3000);
-        let memoryEmbedding: number[] | null;
+        let bestVectorScore = 0;
+        let bestChunkIndex = 0;
+        const fullContent = memory.content.toLowerCase();
 
         // Try cache first, compute and cache on miss
         if (cache) {
           const cached = await cache.getOrCompute(memory, embedder);
-          memoryEmbedding = cached?.embedding ?? null;
+          const memoryEmbedding = cached?.embedding ?? null;
+          if (memoryEmbedding) {
+            bestVectorScore = Math.max(
+              ...queryEmbeddings.map((qe) =>
+                cosineSimilarity(qe, memoryEmbedding)
+              ),
+            );
+          }
+        } else if (!shouldChunk(memory.content)) {
+          // Short memory: embed directly
+          const memoryEmbedding = await embedder.embed(
+            memory.content.substring(0, 3000),
+          );
+          if (memoryEmbedding) {
+            bestVectorScore = Math.max(
+              ...queryEmbeddings.map((qe) =>
+                cosineSimilarity(qe, memoryEmbedding)
+              ),
+            );
+          }
         } else {
-          memoryEmbedding = await embedder.embed(content);
+          // Long memory without cache: chunk and embed each
+          const chunks = chunkContent(memory.content);
+          for (const chunk of chunks) {
+            const emb = await embedder.embed(chunk.content);
+            if (!emb) continue;
+            const score = Math.max(
+              ...queryEmbeddings.map((qe) => cosineSimilarity(qe, emb)),
+            );
+            if (score > bestVectorScore) {
+              bestVectorScore = score;
+              bestChunkIndex = chunk.index;
+            }
+          }
         }
-        if (!memoryEmbedding) continue;
 
-        // Use the best similarity across all query embeddings
-        const vectorScore = Math.max(
-          ...queryEmbeddings.map((qe) => cosineSimilarity(qe, memoryEmbedding)),
-        );
-
-        if (vectorScore < minScore * 0.5) continue;
+        if (bestVectorScore < minScore * 0.5) continue;
 
         const recencyScore = computeRecencyScore(
           memory.date,
@@ -518,10 +551,9 @@ async function vectorSearch(
 
         let graphBoost = 0;
         if (relevantEntityLabels.size > 0) {
-          const lowerContent = content.toLowerCase();
           let matchCount = 0;
           for (const label of relevantEntityLabels) {
-            if (lowerContent.includes(label)) {
+            if (fullContent.includes(label)) {
               matchCount++;
             }
           }
@@ -534,7 +566,7 @@ async function vectorSearch(
           ? weights.instanceBoost
           : 0;
 
-        const finalScore = (vectorScore * weights.VECTOR_WEIGHT) +
+        const finalScore = (bestVectorScore * weights.VECTOR_WEIGHT) +
           (recencyScore * weights.RECENCY_WEIGHT) +
           (graphBoost * weights.GRAPH_WEIGHT) +
           (instanceScore * weights.INSTANCE_WEIGHT);
@@ -545,11 +577,12 @@ async function vectorSearch(
           date: memory.date,
           sourceInstance: memory.sourceInstance,
           content: memory.content,
-          vectorScore,
+          vectorScore: bestVectorScore,
           recencyScore,
           graphBoost,
           instanceScore,
           finalScore,
+          chunkIndex: bestChunkIndex,
         });
       }
     }
@@ -563,7 +596,7 @@ async function vectorSearch(
     if (results.length >= maxResults) break;
     if (item.finalScore < minScore) break; // Sorted, so we can stop early
 
-    const excerpt = findBestExcerpt(item.content, query);
+    const excerpt = findBestExcerpt(item.content, query, item.chunkIndex);
 
     results.push({
       granularity: item.granularity,
@@ -587,25 +620,30 @@ async function vectorSearch(
 }
 
 /**
- * Find the best excerpt from memory content for a given query.
- * Tries to find a sentence containing query terms, falls back to first 200 chars.
- */
-/**
  * Extract the most relevant excerpt from memory content for RAG retrieval.
  *
  * For short memories (<2000 chars), returns the full content — no truncation.
- * For longer memories, finds the bullet section most relevant to the query
- * and returns it with surrounding context (up to 2000 chars).
- *
- * This mirrors the old Psycheros chunker approach: ~512 tokens (~2000 chars)
- * per chunk, returned in full without truncation.
+ * For longer memories with a known chunkIndex, returns the matching chunk's
+ * content directly. Otherwise falls back to keyword-matching on bullet sections.
  */
-function findBestExcerpt(content: string, query: string): string {
+function findBestExcerpt(
+  content: string,
+  query: string,
+  chunkIndex = 0,
+): string {
   const MAX_EXCERPT = 2000;
 
   // Short memories: return in full (most daily/weekly memories are under 2KB)
   if (content.length <= MAX_EXCERPT) {
     return content;
+  }
+
+  // If we know which chunk matched, extract that portion directly
+  if (chunkIndex > 0) {
+    const chunks = chunkContent(content);
+    if (chunks[chunkIndex]) {
+      return chunks[chunkIndex].content;
+    }
   }
 
   // Longer memories: find the most relevant section
@@ -617,7 +655,6 @@ function findBestExcerpt(content: string, query: string): string {
   const bullets = content.split(/(?=^- )/m).filter((s) => s.trim().length > 10);
 
   if (bullets.length === 0) {
-    // No bullet structure — just return the first 2000 chars
     return content.slice(0, MAX_EXCERPT);
   }
 

@@ -25,9 +25,11 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 
 use thiserror::Error;
+
+use crate::proc::hidden_command;
 
 #[derive(Debug, Error)]
 pub enum BundleError {
@@ -132,17 +134,23 @@ pub fn clone_or_fetch_source(
     capture_head_sha(&git, target)
 }
 
-/// Copy the bundled Deno binary from its Tauri-sidecar location to the
-/// stable launcher-data-dir path. The plist / unit file / scheduled task
-/// references the stable path, so it survives shell auto-updates (where
-/// the binary inside the `.app` lives at a path that changes per build).
+/// Copy a sidecar binary from its Tauri-resources location to a stable
+/// launcher-data-dir path. The service supervisor's task / plist / unit
+/// definition references the stable path, so it survives launcher
+/// auto-update (where the binary inside the `.app` / `.exe` bundle moves
+/// per build).
 ///
 /// Overwrites `dest` if it exists. On Unix, sets mode `0o755` so the
 /// service supervisor can `exec` the file — `std::fs::copy` preserves
 /// source permissions, but I don't want to depend on the sidecar being
 /// shipped with the executable bit (Tauri's resource staging is not
 /// guaranteed to preserve it across all platforms / install paths).
-pub fn stage_bundled_deno(sidecar_path: &Path, dest: &Path) -> Result<(), BundleError> {
+///
+/// Generic over which sidecar — Deno, the Windows daemon runner, or any
+/// future bundled tool. The previous name `stage_bundled_deno` survives
+/// as a thin alias for source compatibility, but new call sites should
+/// prefer the generic name.
+pub fn stage_bundled_binary(sidecar_path: &Path, dest: &Path) -> Result<(), BundleError> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -159,6 +167,14 @@ pub fn stage_bundled_deno(sidecar_path: &Path, dest: &Path) -> Result<(), Bundle
     Ok(())
 }
 
+/// Backwards-compatible alias for [`stage_bundled_binary`]. Predates the
+/// Windows daemon-runner sidecar, when Deno was the only bundled
+/// executable. Kept so external callers + the existing first-run path
+/// don't need a flag-day rename.
+pub fn stage_bundled_deno(sidecar_path: &Path, dest: &Path) -> Result<(), BundleError> {
+    stage_bundled_binary(sidecar_path, dest)
+}
+
 /// Run `deno cache src/main.ts` against the extracted psycheros package
 /// to populate Deno's dep cache.
 ///
@@ -170,13 +186,25 @@ pub fn stage_bundled_deno(sidecar_path: &Path, dest: &Path) -> Result<(), Bundle
 /// `source_dir` must be the psycheros package root (the directory
 /// containing `src/main.ts`), not the workspace root. `deno_path` is the
 /// staged binary at `paths::bundled_deno_path()`.
+///
+/// The `--allow-scripts` flag is required because Psycheros depends on
+/// native npm packages with postinstall scripts — most notably
+/// `onnxruntime-node` (embeddings) and `sharp` (image processing).
+/// Deno 2.x blocks these scripts by default as a security measure;
+/// without the flag, `deno cache` exits non-zero with
+/// `error: failed to run scripts for packages: onnxruntime-node, ...`
+/// during first-run. We trust the Psycheros source we just cloned at a
+/// pinned tag, so the broad form (allow all) is appropriate — same
+/// posture as the `-A` (allow-all-perms) flag the daemon itself runs
+/// with at execution time.
 pub fn warm_deno_cache(
     deno_path: &Path,
     source_dir: &Path,
     mut on_line: impl FnMut(&str),
 ) -> Result<(), BundleError> {
-    let mut child = Command::new(deno_path)
+    let mut child = hidden_command(deno_path)
         .arg("cache")
+        .arg("--allow-scripts")
         .arg("src/main.ts")
         .current_dir(source_dir)
         .stdout(Stdio::null())
@@ -209,7 +237,7 @@ pub fn warm_deno_cache(
 /// common cause on a fresh macOS box.
 fn locate_git() -> Result<std::path::PathBuf, BundleError> {
     let lookup = if cfg!(windows) { "where" } else { "which" };
-    let out = Command::new(lookup).arg("git").output()?;
+    let out = hidden_command(lookup).arg("git").output()?;
     if !out.status.success() {
         return Err(BundleError::GitMissing);
     }
@@ -236,7 +264,7 @@ fn run_git_streaming(
     args: &[&str],
     on_line: &mut dyn FnMut(&str),
 ) -> Result<(), BundleError> {
-    let mut child = Command::new(git)
+    let mut child = hidden_command(git)
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::null())
@@ -261,7 +289,7 @@ fn run_git_streaming(
 /// Capture the current HEAD SHA of a clone via `git rev-parse HEAD`.
 /// Returned with the trailing newline trimmed.
 fn capture_head_sha(git: &Path, target: &Path) -> Result<String, BundleError> {
-    let out = Command::new(git)
+    let out = hidden_command(git)
         .args(["rev-parse", "HEAD"])
         .current_dir(target)
         .output()?;
@@ -293,7 +321,7 @@ pub fn query_latest_tag(repo_url: &str, prefix: &str) -> Result<Option<String>, 
     let git = locate_git()?;
     // `--refs` drops the `^{}` peeled-tag entries from the output, which
     // would otherwise show up as duplicates for annotated tags.
-    let out = Command::new(&git)
+    let out = hidden_command(&git)
         .args(["ls-remote", "--tags", "--refs", repo_url])
         .output()?;
     if !out.status.success() {
@@ -328,7 +356,7 @@ pub fn query_latest_tag(repo_url: &str, prefix: &str) -> Result<Option<String>, 
 /// or non-semver-suffixed tags are silently filtered out.
 pub fn list_tags(repo_url: &str, prefix: &str) -> Result<Vec<String>, BundleError> {
     let git = locate_git()?;
-    let out = Command::new(&git)
+    let out = hidden_command(&git)
         .args(["ls-remote", "--tags", "--refs", repo_url])
         .output()?;
     if !out.status.success() {

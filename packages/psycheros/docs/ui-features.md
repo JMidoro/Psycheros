@@ -12,10 +12,12 @@ via `GET /api/conversations/:id/messages/paginated`.
 
 **How it works:**
 
-- Cursor-based pagination using `created_at` timestamps — stable even when new
-  messages arrive during scrolling
-- Older messages are prepended to the DOM with `scrollTop` adjusted to preserve
-  the user's scroll position
+- Cursor-based pagination using `created_at` with message `id` as a tiebreaker
+  for messages sharing the same timestamp — stable even when new messages arrive
+  during scrolling
+- Older messages are inserted after the sentinel element so the sentinel stays
+  pinned at the top of the scroll container, with `scrollTop` adjusted to
+  preserve the user's scroll position
 - Loading is suppressed during active SSE streaming to avoid race conditions
 - In-flight fetches are aborted via `AbortController` on conversation switch
 
@@ -548,6 +550,9 @@ Gen and other settings.
   format
 - Worker model (auto-titling, summarization) always has thinking disabled
   regardless of profile setting
+- The max-tokens parameter is sent as `max_completion_tokens` for models that
+  require it (OpenAI o-series, gpt-5.x) and `max_tokens` for all others — no
+  manual configuration needed
 
 **API Endpoints:**
 
@@ -684,8 +689,7 @@ for context injection.
 **Features:**
 
 - Upload documents (.md, .txt, .pdf, .docx, .xlsx up to 10MB)
-- Set scope: global (all conversations) or per-chat (single conversation)
-- Document cards showing title, file type, scope, chunk count, size, source
+- Document cards showing title, file type, chunk count, size, source
   (upload/entity), date
 - View/Edit documents with a rendered markdown view mode (default) and textarea
   edit mode
@@ -737,7 +741,7 @@ navigation pattern.
 
 **Features:**
 
-- Five tabs: Daily, Weekly, Monthly, Yearly, Significant
+- Six tabs: Daily, Weekly, Monthly, Yearly, Significant, Instructions
 - File lists sorted newest-first, each linking to a full editor
 - **Pagination**: Shows "X of N" count with "Load more" button when more than 50
   memories exist for a granularity
@@ -756,6 +760,10 @@ navigation pattern.
 - Catch-up tab shows consolidation status (weekly/monthly/yearly) with a Run
   Catch-up button that backfills all missed periods in the background, with
   results displayed via SSE
+- Instructions tab provides a textarea for custom daily memory-writing
+  instructions (stored in `.psycheros/memory-settings.json`). Written in
+  first-person from the entity's perspective — these shape what the entity
+  remembers and how it expresses it. Defaults to empty.
 - Works in offline mode (no MCP) — edits are saved locally only
 
 **Flow:**
@@ -795,6 +803,8 @@ navigation pattern.
 - `GET /fragments/settings/memories/search?q=` — search memories
   (cross-granularity)
 - `GET /fragments/settings/memories/consolidation` — catch-up status tab
+- `GET /fragments/settings/memories/instructions` — custom daily memory
+  instructions tab
 - `GET /fragments/settings/memories/:granularity?offset=&before=&after=` — file
   list (with optional pagination and date range)
 - `GET /fragments/settings/memories/:granularity/:date` — editor
@@ -802,6 +812,7 @@ navigation pattern.
 - `POST /api/memories/significant/create` — create new significant memory
 - `DELETE /api/memories/significant/:filename` — delete a significant memory
 - `POST /api/memories/consolidation/run` — run catch-up consolidation
+- `POST /api/memories/instructions` — save custom daily memory instructions
 
 **Source files:** `src/server/templates.ts` (render functions),
 `src/server/routes.ts` (handlers), `src/mcp-client/mod.ts` (MCP methods),
@@ -952,6 +963,15 @@ Situational Awareness in the sidebar.
   omitted from the SA block entirely when no devices are connected or
   configured.
 
+- **Device Preferences** — Custom instructions configured per integration
+  (Lovense or Intiface) in External Connections → Intimacy. Each section has a
+  "Custom Instructions" textarea where the user writes preferences for how the
+  entity should use connected devices. These are injected as
+  `<lovense_preferences>` or `<toy_preferences>` XML blocks inside situational
+  awareness, but **only** when a matching device is actually connected. No
+  device connected means no preferences in context — keeping the system message
+  lean when the entity doesn't need them.
+
 **Context Format:**
 
 The SA block is injected into the system message as structured XML, placed after
@@ -978,8 +998,15 @@ custom identity files and before lorebook/RAG content:
       <device name="Coffee Maker" type="shelly-plug" />
     </home>
   </connected_devices>
+  <lovense_preferences>Start slow, ramp up gradually, prefer pattern mode</lovense_preferences>
+  <toy_preferences>Use gentle vibration, check in before escalating</toy_preferences>
 </situational_awareness>
 ```
+
+The `<lovense_preferences>` and `<toy_preferences>` blocks only appear when the
+corresponding device type is connected and the user has written custom
+instructions in External Connections → Intimacy. They are omitted from the SA
+block when no matching device is connected or the instructions field is empty.
 
 Both `current_conversation` and the nested `conversation` use the same attribute
 structure (`id` + `title`) to make it clear they're the same type of entity —

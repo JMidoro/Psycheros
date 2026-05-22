@@ -4,6 +4,16 @@ All notable changes to entity-loom are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.3.3] - 2026-05-22
+
+### Fixed
+
+- OpenAI o-series and gpt-5.x models now use `max_completion_tokens` instead of
+  the rejected `max_tokens` parameter, fixing connection tests and all LLM
+  requests on newer models.
+
 ## [0.3.2] - 2026-05-15
 
 ### Fixed
@@ -76,6 +86,7 @@ All notable changes to entity-loom are documented here. The format follows
   - **Kindroid / KinLog** — JSON
 - Five-stage wizard served at `http://localhost:3210`.
 
+[0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.3
 [0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.2
 [0.3.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.1
 [0.3.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.0

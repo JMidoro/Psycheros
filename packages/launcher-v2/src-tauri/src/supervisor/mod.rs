@@ -37,6 +37,9 @@ mod systemd;
 #[cfg(target_os = "windows")]
 mod task_scheduler;
 
+#[cfg(target_os = "windows")]
+pub mod launcher_agent_win;
+
 #[cfg(target_os = "macos")]
 pub use launchd::LaunchdSupervisor as DefaultSupervisor;
 
@@ -52,9 +55,9 @@ pub use task_scheduler::TaskSchedulerSupervisor as DefaultSupervisor;
 
 /// Inputs needed to register the daemon with the OS supervisor.
 ///
-/// Constructed by `daemon::lifecycle` from the user's persisted config plus
-/// the launcher's bundled paths. The supervisor turns this into the OS-native
-/// service definition (plist / unit file / scheduled task).
+/// Constructed by `commands::build_daemon_config` from the user's persisted
+/// config plus the launcher's bundled paths. The supervisor turns this into
+/// the OS-native service definition (plist / unit file / scheduled task).
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     /// Reverse-DNS label used by the OS supervisor to identify the service.

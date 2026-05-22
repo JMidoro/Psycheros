@@ -52,6 +52,13 @@ export {
 // Content utilities
 export { extractChatIds, formatMemoryContent } from "./file-writer.ts";
 
+// Memory settings (custom daily instructions)
+export {
+  loadMemorySettings,
+  type MemorySettings,
+  saveMemorySettings,
+} from "./memory-settings.ts";
+
 // Trigger, catch-up, and integrity
 export {
   catchUpSummarization,

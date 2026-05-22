@@ -24,6 +24,7 @@ import { buildIdentitySystemMessage } from "../entity/context.ts";
 import { getTimezoneModifier } from "./date-utils.ts";
 import { summarizeDiscordActivity } from "./discord-summarizer.ts";
 import { loadDiscordGatewayConfig } from "../llm/discord-settings.ts";
+import { loadMemorySettings } from "./memory-settings.ts";
 
 /**
  * Default summarizer configuration.
@@ -54,6 +55,7 @@ Guidelines:
 - Skip generic greetings and focus on substance
 - Write as bullet points, one memory per line
 
+{{CUSTOM_INSTRUCTIONS}}
 Conversations from today:
 {{CONVERSATIONS}}
 {{PLATFORM_ACTIVITY}}
@@ -154,6 +156,7 @@ async function generateDailySummary(
   platformActivity?: string,
   platformChatId?: string,
   memoryInstructions?: string,
+  customInstructions?: string,
 ): Promise<string[]> {
   if (conversations.length === 0 && !platformActivity) {
     return [];
@@ -181,6 +184,14 @@ async function generateDailySummary(
   } else {
     prompt = prompt.replace("{{PLATFORM_ACTIVITY}}", "");
   }
+
+  // Inject custom daily memory-writing instructions
+  prompt = prompt.replace(
+    "{{CUSTOM_INSTRUCTIONS}}",
+    customInstructions
+      ? `\nMy additional memory-writing instructions:\n${customInstructions}\n`
+      : "",
+  );
 
   const messages: ChatMessage[] = [
     { role: "system", content: identitySystemMessage },
@@ -270,6 +281,15 @@ export async function summarizeDay(
   // Collect web conversations (Discord is excluded by collectConversationsForDate)
   const conversations = collectConversationsForDate(db, date, modifier);
 
+  // Load custom daily memory-writing instructions
+  let customInstructions = "";
+  try {
+    const memSettings = await loadMemorySettings(dataRoot);
+    customInstructions = memSettings.dailyInstructions;
+  } catch {
+    // Non-critical — proceed without custom instructions
+  }
+
   // Check for Discord activity to include via pre-summarizer
   let platformActivity = "";
   let discordMemoryInstructions = "";
@@ -338,6 +358,7 @@ export async function summarizeDay(
       platformActivity || undefined,
       discordSyntheticChatId || undefined,
       discordMemoryInstructions || undefined,
+      customInstructions || undefined,
     );
 
     if (bulletPoints.length === 0) {

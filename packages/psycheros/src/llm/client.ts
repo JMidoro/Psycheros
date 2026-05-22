@@ -59,6 +59,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
+ *
+ * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` and require
+ * `max_completion_tokens` instead. This check is model-name-based so it works
+ * regardless of which provider (OpenAI direct, OpenRouter, etc.) is routing
+ * the request.
+ */
+function usesMaxCompletionTokens(model: string): boolean {
+  const lower = model.toLowerCase();
+  // o-series reasoning models: o1, o3, o4-mini, etc.
+  if (/^o[134]/.test(lower)) return true;
+  // gpt-5.x and above
+  if (/^gpt-5/.test(lower)) return true;
+  return false;
+}
+
+/**
  * Client for communicating with the LLM API.
  */
 export class LLMClient {
@@ -432,9 +449,17 @@ export class LLMClient {
     }
 
     if (options?.maxTokens !== undefined) {
-      request.max_tokens = options.maxTokens;
+      if (usesMaxCompletionTokens(this.config.model)) {
+        request.max_completion_tokens = options.maxTokens;
+      } else {
+        request.max_tokens = options.maxTokens;
+      }
     } else if (this.config.maxTokens !== undefined) {
-      request.max_tokens = this.config.maxTokens;
+      if (usesMaxCompletionTokens(this.config.model)) {
+        request.max_completion_tokens = this.config.maxTokens;
+      } else {
+        request.max_tokens = this.config.maxTokens;
+      }
     }
 
     if (this.config.topP !== undefined) {

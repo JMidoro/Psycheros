@@ -320,9 +320,9 @@ configurable duration and re-trigger behavior.
 
 **Entity tools:**
 
-| Tool    | Description                                                |
-| ------- | ---------------------------------------------------------- |
-| `vault` | Manage vault documents (write, read, append, list, search) |
+| Tool    | Description                                                         |
+| ------- | ------------------------------------------------------------------- |
+| `vault` | Manage vault documents (write, read, append, rewrite, list, search) |
 
 ### Vector Search Backend
 

@@ -35,8 +35,31 @@ pub fn drive(handle: &AppHandle, status: DaemonStatus) {
     let state = handle.state::<AppState>();
     let summoned = state.user_summoned.load(Ordering::SeqCst);
 
-    let target = if summoned || status.state != DaemonState::Running {
-        state.splash_url.clone()
+    // Opportunistic capture: if the webview is currently showing a real
+    // splash URL (not about:blank, not the daemon origin), latch it.
+    // This is the load-bearing fix for the Windows WebView2 race where
+    // setup()-time `window.url()` returned about:blank.
+    if let Some(window) = handle.get_webview_window("main") {
+        if let Ok(current) = window.url().map(|u| u.to_string()) {
+            state.maybe_capture_splash(&current, status.port);
+        }
+    }
+
+    let splash_target = state.splash_url_snapshot();
+    let want_splash = summoned || status.state != DaemonState::Running;
+
+    let target = if want_splash {
+        // Refuse to navigate to a placeholder URL — the user would see
+        // a blank screen. Better to no-op and let the next tick try
+        // again after the webview has loaded a real splash URL.
+        if splash_target.is_empty() || splash_target == "about:blank" {
+            eprintln!(
+                "[launcher] splash URL not captured yet (current snapshot={splash_target:?}); \
+                 skipping navigate"
+            );
+            return;
+        }
+        splash_target
     } else {
         format!("http://localhost:{}/", status.port)
     };

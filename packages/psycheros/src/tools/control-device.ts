@@ -95,7 +95,7 @@ async function controlShellyPlug(
 /**
  * Dispatch a control action to the appropriate device handler based on type.
  */
-function dispatchDeviceControl(
+export function dispatchDeviceControl(
   device: HomeDevice,
   action: "on" | "off" | "status",
 ): Promise<{ success: boolean; message: string }> {

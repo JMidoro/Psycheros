@@ -69,8 +69,8 @@ jobs:
       - name: Run tests
         run: deno task test
 
-  launcher-v2:
-    name: launcher-v2 cargo + smoke
+  launcher-v2-macos:
+    name: launcher-v2 cargo + smoke (macOS)
     if: github.repository == 'PsycherosAI/Psycheros'
     runs-on: macos-14
     steps:
@@ -141,3 +141,64 @@ jobs:
       - name: Run E2E tests
         working-directory: packages/launcher-v2/e2e
         run: npm test
+
+  launcher-v2-windows:
+    # Windows half of the launcher-v2 CI matrix. Runs the same
+    # fmt / clippy / test / smoke gates as the macOS job. E2E
+    # (wdio + tauri-plugin-webdriver) is intentionally omitted — the
+    # E2E rig is currently macOS-only; bringing it to Windows is
+    # follow-up work, not gate work.
+    name: launcher-v2 cargo + smoke (Windows)
+    if: github.repository == 'PsycherosAI/Psycheros'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Rust (MSVC toolchain)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+        # No `targets:` — windows-latest's default host triple is
+        # x86_64-pc-windows-msvc, which is the only Windows target
+        # we currently ship.
+
+      - name: Set up Deno (for sidecar staging + integration test)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .deno-version
+
+      - name: Stage sidecar Deno + verify icons (setup.ps1)
+        # PowerShell-equivalent of setup.sh. Stages the deno sidecar
+        # into src-tauri/binaries/ and confirms committed icons are
+        # present. The daemon-runner sidecar is a [[bin]] target
+        # that cargo builds and Tauri auto-bundles — not staged
+        # here.
+        working-directory: packages/launcher-v2
+        shell: pwsh
+        run: ./scripts/setup.ps1
+
+      - name: cargo fmt --check
+        working-directory: packages/launcher-v2/src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: packages/launcher-v2/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test (lib + integration)
+        working-directory: packages/launcher-v2/src-tauri
+        # --test-threads=1 because snapshot/prune tests mutate the
+        # PSYCHEROS_LAUNCHER_DATA_DIR env var. Same reason as macOS.
+        run: cargo test --all-targets -- --test-threads=1
+
+      - name: smoke (--smoke gate)
+        working-directory: packages/launcher-v2/src-tauri
+        run: cargo run --bin psycheros-launcher -- --smoke
+
+      - name: cargo clippy (webdriver feature)
+        working-directory: packages/launcher-v2/src-tauri
+        # Same rationale as the macOS job — the webdriver feature
+        # pulls in axum/hyper/tower; keep feature-conditional code
+        # from slipping past clippy. The E2E test rig itself isn't
+        # run on Windows yet (see note at job top).
+        run: cargo clippy --features webdriver --all-targets -- -D warnings

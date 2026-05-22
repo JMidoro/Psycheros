@@ -143,50 +143,151 @@ flow. Two design choices:
 We default to documenting linger. The autostart-desktop fallback is worth
 considering for users who refuse the sudo prompt, but it's secondary.
 
-## Windows — Task Scheduler (stub)
+## Windows — Task Scheduler (full impl)
 
 [`supervisor/task_scheduler.rs`](../src-tauri/src/supervisor/task_scheduler.rs)
 
-- **Where:** Task Scheduler — task name `Psycheros`
-- **Privilege:** user-level task (no admin needed)
-- **Restart on crash:** task settings — `RestartCount=3`, `RestartInterval=PT5S`
-- **Start at login:** trigger "At log on" + "Any user"
-- **Logs:** no journal equivalent — daemon writes to flat files via a wrapper
-  script
-- **Status check:** `schtasks /query /tn Psycheros /fo csv /nh` exit 0 =
-  registered
+- **Where:** Task Scheduler library root — task name `Psycheros`
+- **Domain:** user task (interactive logon token, no admin needed)
+- **Privilege:** none required, ever (no UAC, no auth prompt)
+- **Autostart mode:** `<LogonTrigger>` for the current user +
+  `<RestartOnFailure Count=3 Interval=PT1M/>` — fires at every logon and retries
+  the action up to three times on non-zero exit. `PT1M` is the Task Scheduler
+  schema's minimum interval; shorter values are rejected at `/Create` time.
+- **Manual mode:** empty `<Triggers/>` block and no `<RestartOnFailure>` — only
+  runs when the user explicitly hits Start; stays off across login / logout
+  cycles until they hit Start again.
+- **Logs:** flat files at `<data_dir>/logs/daemon.stdout.log` and
+  `daemon.stderr.log` — opened by the `psycheros-daemon-runner` sidecar (see
+  "Runner sidecar" below) and inherited by the deno child as its stdout/stderr
+  handles.
+- **Status check:** `schtasks /Query /TN Psycheros` exit 0 = registered.
+  `schtasks /Query /TN Psycheros /FO LIST /V` exposes
+  `Scheduled Task
+  State: Enabled|Disabled`, which the supervisor uses to
+  distinguish the user's Stop click (Disabled) from a transient mid-boot state
+  (Enabled but port not yet bound).
 
-### Implementation notes for the next implementer
+### Task XML contract
 
-1. Use PowerShell's `Register-ScheduledTask` cmdlet (cleaner than `schtasks.exe`
-   for complex trigger/action setups).
-2. Action: `<deno_path> run -A src\main.ts` with working directory
-   `<source_dir>` and environment variables via the task properties.
-3. To capture stdout/stderr to flat files, the action needs a wrapper: create a
-   small PowerShell launcher that does
-   `deno.exe run -A src\main.ts 1> stdout.log 2> stderr.log` and point the task
-   action at it.
-4. `is_loaded()`: shell out to `schtasks /query /tn Psycheros`.
-5. `uninstall()`: `schtasks /delete /tn Psycheros /f`.
+The launcher hand-rolls the task XML (no `windows-rs` Task Scheduler COM dep)
+because the surface is small and the schema is stable across Windows 8.1+. The
+XML is written as **UTF-16 LE with BOM** to a tempfile, then
+`schtasks /Create /XML <tmp> /TN Psycheros /F` registers it. UTF-8 is rejected
+by `schtasks /XML` with a generic "malformed XML" error that's easy to lose an
+hour to.
 
-### Weaker supervision than launchd/systemd
+The XML sets `<MultipleInstancesPolicy>IgnoreNew</...>` so a second `/Run` while
+the daemon is already up is a safe no-op, `<ExecutionTimeLimit>PT0S</...>` so
+the daemon runs indefinitely (default Task Scheduler limit is 72 hours), and
+`<LogonType>InteractiveToken</...>` + `<RunLevel>LeastPrivilege</...>` so the
+task runs as the current desktop user with no elevation.
+
+### Stop semantics
+
+Task Scheduler doesn't have a launchd-style "loaded vs unloaded" axis — a task
+is either registered or not. To get the same Stopped-vs-Installed state machine
+the macOS impl exposes, `stop_daemon` does `schtasks /End` (terminate the
+running instance) followed by `schtasks /Change /DISABLE` (flip the persistent
+enabled flag off). `is_loaded` parses `Scheduled Task State:` from the LIST
+query so a disabled task surfaces as `Stopped`, not `Installed`. `start_daemon`
+re-enables and runs. The Stop flow is therefore **persistent across logins** —
+manually stopping the daemon keeps it off until the user hits Start. (Mode
+semantics still differ: autostart's `<LogonTrigger>` re-enables the implicit
+run-at-logon flow once Start is clicked.)
+
+`uninstall` does `schtasks /End` + `schtasks /Delete /F` — task gone, no orphan
+instances.
+
+### Runner sidecar (job-object cascade kill + stream redirection)
+
+Task Scheduler's `<Exec>` action has two limitations we have to work around:
+
+1. **No native stdio redirection** — the executable is invoked with no shell, so
+   `1>> file` syntax doesn't apply.
+2. **No process-tree cascade on terminate** — when `schtasks /End` kills the
+   action's root process, child processes survive as orphans, including the deno
+   process actually holding the port. An early `.cmd` wrapper implementation
+   exhibited this: Stop would appear to succeed (cmd.exe died) but the deno
+   child kept running, so the port stayed bound and the manager's state machine
+   couldn't reach `Stopped`.
+
+Both problems are solved by a small Windows-only Rust sidecar binary,
+`psycheros-daemon-runner` (`src-tauri/src/bin/psycheros-daemon-runner.rs`):
+
+- `#![windows_subsystem = "windows"]` — no console window flashes up when the
+  task fires.
+- Creates a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, then
+  `AssignProcessToJobObject(self)`. Children spawned after this inherit job
+  membership.
+- Spawns deno via `std::process::Command` with `CREATE_NO_WINDOW`, passes
+  opened-in-append `daemon.stdout.log` / `daemon.stderr.log` file handles as the
+  child's stdout/stderr.
+- Waits for deno. If `schtasks /End` calls `TerminateProcess(runner)` during the
+  wait, the runner's handle on the job closes (it was the only holder); the
+  kernel then walks the job and terminates deno. Stop is reliable, the port
+  frees, and the manager's state machine transitions cleanly.
+
+The runner takes its inputs positionally on argv so the supervisor can build the
+command-line at install time without a quoting layer beyond the standard
+`CommandLineToArgvW` rules. Argv layout:
+
+```text
+psycheros-daemon-runner.exe <deno_path> <source_dir> <stdout_log> <stderr_log> [KEY=VALUE ...]
+```
+
+The supervisor's `render_task_xml` emits this as the task's `<Arguments>`
+element, with each token double-quoted.
+
+The runner ships as a Tauri `externalBin` sidecar on Windows
+(`tauri.windows.conf.json`); `setup.ps1` builds it via
+`cargo build --release --bin psycheros-daemon-runner` and stages it at
+`src-tauri/binaries/psycheros-daemon-runner-x86_64-pc-windows-msvc.exe`.
+First-run setup copies it into
+`<launcher_data_dir>/bin/psycheros-daemon-runner.exe` so the task XML references
+a path that survives launcher auto-update — same staging pattern as the bundled
+Deno.
+
+The launcher's log_tailer module + manager's live log panel tail
+`daemon.stderr.log` exactly the same way as on macOS — the filenames are
+deliberately identical across platforms.
+
+### Launcher autostart agent
+
+Mirrors the macOS
+[`launcher_agent`](../src-tauri/src/supervisor/launcher_agent.rs) posture: a
+second task `Psycheros-Launcher` is registered alongside the daemon's
+`Psycheros` task on install. The launcher task fires at user logon, invokes
+`<install_path>\Psycheros.exe --no-window` (under a `cmd.exe /c "..."` wrapper
+so stdout/stderr land in `launcher.stdout.log` / `launcher.stderr.log`), and
+deliberately omits `<RestartOnFailure>` — Quit Launcher from the tray should
+stick.
+
+Dev builds skip the launcher-agent install: the agent's
+`resolve_launcher_binary()` recognizes installed paths (`Program Files`,
+`AppData\Local\Psycheros`) and refuses anything under `target\debug\` /
+`target\release\` so a dev session doesn't pin a stale binary into the user's
+Task Scheduler library across rebuilds.
+
+### Weaker supervision than launchd / systemd
 
 Task Scheduler's restart-on-failure is genuinely less robust:
 
-- No equivalent to launchd's crash-loop throttling (after N rapid crashes,
-  launchd stops trying; Task Scheduler keeps trying forever per the
-  RestartCount, then gives up silently).
+- No equivalent to launchd's crash-loop throttling. After
+  `<RestartOnFailure Count=3>` retries Task Scheduler gives up silently; the
+  manager card surfaces `Installed` (registered but no port).
 - "Failure" is defined narrowly (non-zero exit code). A process that hangs
-  without exiting is not considered failed by Task Scheduler.
+  without exiting is not considered failed.
 
-The manager surface should poll daemon status more aggressively on Windows (e.g.
-every 1s instead of 2s) and surface "daemon stopped" states with manual-restart
-affordances more prominently.
+The manager surface should poll daemon status more aggressively on Windows (~1s
+vs 2s) and surface "daemon stopped" states with manual- restart affordances more
+prominently. (Not yet implemented — the 2s shared poll covers both platforms
+today.)
 
 ### SmartScreen
 
-Unsigned `.exe` and `.msi` files trigger SmartScreen warnings on first run. The
-documented workaround: right-click → Properties → Unblock, then "More info → Run
+Unsigned `.exe` and `.msi` files trigger SmartScreen warnings on first run.
+Documented workaround: right-click → Properties → Unblock, then "More info → Run
 anyway." Same posture as macOS Gatekeeper. See [`release.md`](release.md).
 
 ## Cross-platform integration testing

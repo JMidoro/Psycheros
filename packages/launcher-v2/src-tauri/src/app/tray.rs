@@ -1,10 +1,21 @@
-//! macOS menu-bar / status-bar tray icon.
+//! System tray icon — macOS menu bar, Windows notification area.
 //!
 //! Strict identity: **the tray is visible if and only if the daemon is
 //! actually running.** For non-technical users this is a clear,
 //! at-a-glance binary signal — Psycheros is alive (icon present) or it
 //! isn't (icon gone). Re-entry when the daemon is down is via the .app
-//! icon in /Applications.
+//! icon in `/Applications` (macOS) or the Start Menu shortcut /
+//! `Program Files\Psycheros\Psycheros.exe` (Windows).
+//!
+//! ## Per-OS icon
+//!
+//! macOS menu bars auto-tint template images (white-on-transparent
+//! PNGs) to match the menu-bar theme. Windows notification areas
+//! render bytes as-is, so a template-style image looks like an
+//! illegible black blob there. [`install`] branches the icon asset
+//! choice — `tray-icon-template.png` on macOS, the full-color
+//! `32x32.png` on Windows/Linux — and sets `icon_as_template(true)`
+//! only on macOS.
 //!
 //! ## Lifecycle
 //!
@@ -19,16 +30,17 @@
 //!
 //! ## Boot grace
 //!
-//! At login launchd starts the launcher with `--no-window`. The daemon
-//! is also booting in parallel and may take a few seconds to bind its
-//! port. During that window the daemon's state is `Installed`, not
+//! At login the OS supervisor (launchd on macOS, Task Scheduler on
+//! Windows) starts the launcher with `--no-window`. The daemon is also
+//! booting in parallel and may take a few seconds to bind its port.
+//! During that window the daemon's state is `Installed`, not
 //! `Running`, so by the strict rule the tray is hidden — but the
 //! launcher MUST stay alive to detect the eventual transition to
 //! `Running` and show the tray then. The [`HAS_BEEN_RUNNING`] flag
 //! guards this: we only exit on a hide if we've previously seen the
 //! daemon `Running` in this session. A login boot that never reaches
 //! `Running` will keep the launcher alive in the background, but it's
-//! cheap and the user can investigate via the .app.
+//! cheap and the user can investigate via the installed .exe / .app.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,8 +121,16 @@ pub fn is_autostart(mode: DaemonMode) -> bool {
 /// watcher's first tick reveals it iff the daemon is `Running`.
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // Tray icon — embedded at compile time so a corrupted icons/ dir at
-    // runtime can't take the tray down.
-    let icon_bytes = include_bytes!("../../icons/tray-icon-template.png");
+    // runtime can't take the tray down. The macOS menu bar auto-tints
+    // template images (white on dark mode, black on light); the
+    // notification area on Windows just renders the bytes as-is, so a
+    // template-style monochrome PNG appears as an illegible black blob
+    // there. Branch the asset choice on OS rather than ship one icon
+    // for both.
+    #[cfg(target_os = "macos")]
+    let icon_bytes: &[u8] = include_bytes!("../../icons/tray-icon-template.png");
+    #[cfg(not(target_os = "macos"))]
+    let icon_bytes: &[u8] = include_bytes!("../../icons/32x32.png");
     let icon = Image::from_bytes(icon_bytes)?;
 
     // The strict rule means the tray is only ever visible when the
@@ -153,9 +173,18 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     ];
     let menu = Menu::with_items(app, &items)?;
 
+    // icon_as_template is macOS-only behavior — it tells the menu bar
+    // to recolor a monochrome image to match the current theme.
+    // Setting it true on Windows/Linux doesn't help and arguably hurts
+    // (notification areas there just want a normal RGBA icon).
+    #[cfg(target_os = "macos")]
+    let use_template = true;
+    #[cfg(not(target_os = "macos"))]
+    let use_template = false;
+
     let tray = TrayIconBuilder::with_id("main")
         .icon(icon)
-        .icon_as_template(true)
+        .icon_as_template(use_template)
         .menu(&menu)
         // false = left-click runs our custom handler instead of opening
         // the menu. Right-click always opens the menu, matching the

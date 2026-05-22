@@ -74,8 +74,8 @@ to provide higher-quality distilled summaries for broad queries, while the
 original daily memories preserve full detail.
 
 SQLite + sqlite-vec scales well for this use case — even a lifetime of daily
-memories (50 years × 365 days = ~18,000 entries) is trivially small for vector
-search.
+memories (50 years × 365 days = ~18,000 entries, perhaps ~30,000 chunks with
+longer consolidation tiers) is trivially small for vector search.
 
 ### Storage Layout
 
@@ -118,17 +118,21 @@ sentences.
 2. Entity nodes in the knowledge graph matching the query are found (for graph
    boosting)
 3. **Cached embeddings** (preferred): KNN search against pre-computed embeddings
-   stored in `graph.db` via sqlite-vec. Returns top candidates in sub-second
-   time. Embeddings are computed eagerly when memories are created/updated via
-   MCP, and lazily on first search for any uncached memories.
+   stored in `graph.db` via sqlite-vec. Long memories (>3000 chars) are split
+   into overlapping ~2048-char chunks, each embedded independently — results are
+   deduplicated by parent memory, keeping the best chunk score. Returns top
+   candidates in sub-second time. Embeddings are computed eagerly when memories
+   are created/updated via MCP, and lazily on first search for any uncached
+   memories.
 4. **Full scan fallback**: If the embedding cache is empty (e.g., fresh
    install), all memory files are loaded, embedded, and cached as they go. Each
    file only needs to be embedded once — subsequent searches use the cached
-   vector.
+   vector. Long memories are chunked during this process.
 5. Each candidate memory is scored using the multi-signal formula above
 6. Results are sorted by final score and filtered by `minScore`
 7. Excerpts are returned: short memories (<2000 chars) in full; longer memories
-   get the most relevant section with surrounding context
+   use the matched chunk's content directly, or fall back to keyword-matching on
+   bullet sections
 
 ### Fallback
 
@@ -146,17 +150,18 @@ more relevant when searching from Psycheros than from SillyTavern.
 
 ## Related Source Files
 
-| File                                | Purpose                                                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `src/tools/memory.ts`               | Memory MCP tools (create, read, update, delete, search, list)                                     |
-| `src/consolidation/consolidator.ts` | Consolidation logic (daily→weekly→monthly→yearly), catch-up                                       |
-| `src/consolidation/periods.ts`      | ISO week helpers, period calculation, date filtering                                              |
-| `src/consolidation/prompts.ts`      | LLM prompt templates for consolidation                                                            |
-| `src/embeddings/mod.ts`             | Local embedding model (all-MiniLM-L6-v2)                                                          |
-| `src/embeddings/cache.ts`           | Embedding cache — stores pre-computed memory vectors in `graph.db` with content-hash invalidation |
-| `src/graph/memory-integration.ts`   | Auto-extract entities from memories into graph                                                    |
-| `src/tools/sync.ts`                 | Sync MCP tools (pull, push, status)                                                               |
-| `src/sync/versioning.ts`            | Vector clock implementation                                                                       |
-| `src/sync/conflict.ts`              | Conflict resolution strategies                                                                    |
-| `src/storage/file-store.ts`         | File-based storage for identity and memory files                                                  |
-| `src/mod.ts`                        | Entry point, scheduler instantiation, consolidation schedule definitions, startup catch-up        |
+| File                                | Purpose                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/tools/memory.ts`               | Memory MCP tools (create, read, update, delete, search, list)                              |
+| `src/consolidation/consolidator.ts` | Consolidation logic (daily→weekly→monthly→yearly), catch-up                                |
+| `src/consolidation/periods.ts`      | ISO week helpers, period calculation, date filtering                                       |
+| `src/consolidation/prompts.ts`      | LLM prompt templates for consolidation                                                     |
+| `src/embeddings/mod.ts`             | Local embedding model (all-MiniLM-L6-v2)                                                   |
+| `src/embeddings/cache.ts`           | Embedding cache — chunk-aware storage in `graph.db` with content-hash invalidation         |
+| `src/embeddings/chunker.ts`         | Splits long memories into overlapping ~2048-char chunks for independent embedding          |
+| `src/graph/memory-integration.ts`   | Auto-extract entities from memories into graph                                             |
+| `src/tools/sync.ts`                 | Sync MCP tools (pull, push, status)                                                        |
+| `src/sync/versioning.ts`            | Vector clock implementation                                                                |
+| `src/sync/conflict.ts`              | Conflict resolution strategies                                                             |
+| `src/storage/file-store.ts`         | File-based storage for identity and memory files                                           |
+| `src/mod.ts`                        | Entry point, scheduler instantiation, consolidation schedule definitions, startup catch-up |

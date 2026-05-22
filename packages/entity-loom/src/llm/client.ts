@@ -84,6 +84,32 @@ export class LLMClient {
   }
 
   /**
+   * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
+   *
+   * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` and require
+   * `max_completion_tokens` instead. This check is model-name-based so it works
+   * regardless of which provider is routing the request.
+   */
+  private usesMaxCompletionTokens(): boolean {
+    const lower = this.config.model.toLowerCase();
+    if (/^o[134]/.test(lower)) return true;
+    if (/^gpt-5/.test(lower)) return true;
+    return false;
+  }
+
+  /** Apply the max-tokens parameter using the correct field name for the model. */
+  private applyMaxTokens(
+    body: Record<string, unknown>,
+    maxTokens: number,
+  ): void {
+    if (this.usesMaxCompletionTokens()) {
+      body.max_completion_tokens = maxTokens;
+    } else {
+      body.max_tokens = maxTokens;
+    }
+  }
+
+  /**
    * Send a chat completion request and return the full text response.
    * Implements exponential backoff retry on rate limits and timeouts.
    */
@@ -117,7 +143,7 @@ export class LLMClient {
           body.temperature = options.temperature;
         }
         if (options?.maxTokens !== undefined) {
-          body.max_tokens = options.maxTokens;
+          this.applyMaxTokens(body, options.maxTokens);
         }
         if (options?.jsonMode) {
           body.response_format = { type: "json_object" };
@@ -183,7 +209,9 @@ export class LLMClient {
     if (options?.temperature !== undefined) {
       body.temperature = options.temperature;
     }
-    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+    if (options?.maxTokens !== undefined) {
+      this.applyMaxTokens(body, options.maxTokens);
+    }
 
     const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",

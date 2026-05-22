@@ -40,9 +40,9 @@ The root `deno.json` workspace list intentionally omits it.
    definition; the OS supervises. Closing/crashing the launcher never touches
    the daemon. See [`docs/architecture.md`](docs/architecture.md).
 2. **Cross-platform via trait, not `#[cfg]` everywhere.** All daemon lifecycle
-   goes through [`supervisor::ServiceSupervisor`]. The macOS impl is full;
-   Linux + Windows are stubs with explicit `NotImplemented`. See
-   [`docs/supervisors.md`](docs/supervisors.md).
+   goes through [`supervisor::ServiceSupervisor`]. macOS (launchd) and Windows
+   (Task Scheduler) are full impls; Linux (systemd-user) is a stub with explicit
+   `NotImplemented`. See [`docs/supervisors.md`](docs/supervisors.md).
 3. **One window, two surfaces.** Chat and manager render in the same `main`
    window. `Cmd+,` toggles. The webview navigates between `tauri://localhost/`
    (manager) and `http://localhost:3000/` (chat).
@@ -60,13 +60,21 @@ The root `deno.json` workspace list intentionally omits it.
 lib.rs                    Tauri builder; entry from main.rs
 main.rs                   Thin binary wrapper around lib::run()
 
+bin/
+  psycheros-daemon-runner.rs  Windows sidecar — Job-Object wrapper for deno.
+                              Solves cmd-window + Stop-doesn't-kill-deno
+                              problems. Ships as a Tauri externalBin via
+                              tauri.windows.conf.json.
+
 paths.rs                  Per-OS path resolution (app data, source, deno, logs)
 
 supervisor/
   mod.rs                  ServiceSupervisor trait + DaemonConfig + DefaultSupervisor alias
   launchd.rs              macOS: dual plist (autostart/manual) + start/stop/restart
+  launcher_agent.rs       macOS launcher autostart plist
   systemd.rs              Linux: stub
-  task_scheduler.rs       Windows: stub
+  task_scheduler.rs       Windows: dual XML (autostart/manual) + schtasks lifecycle
+  launcher_agent_win.rs   Windows launcher autostart task
 
 daemon/
   mod.rs                  Public surface — DAEMON_PORT fallback const, re-exports
@@ -180,14 +188,96 @@ instead of a frozen chat window.
 - **Annotated tag SHA ≠ commit SHA.** `query_latest_tag` returns the tag name
   (e.g. `psycheros-v0.3.3`) which is the stable identifier; the actual SHA is
   exposed only for diagnostics.
+- **`schtasks /Create /XML` requires UTF-16 LE with BOM.** UTF-8 input is
+  rejected with a generic "malformed XML" error that's easy to lose an hour to.
+  See [`task_scheduler::write_utf16_le_with_bom`].
+- **`<UseUnifiedSchedulingEngine>true</...>` is incompatible with
+  `<RestartOnFailure>`.** The unified engine rejects the legacy Interval/Count
+  restart spec at /Create time. Task XML intentionally omits
+  UseUnifiedSchedulingEngine so RestartOnFailure validates in autostart mode.
+  The cost is slightly more Event Log noise; the benefit is crash-restart
+  actually working.
+- **`<RestartOnFailure><Interval>` has a one-minute minimum.** Per the Task
+  Scheduler schema, anything smaller than `PT1M` is rejected at /Create time
+  with `(N,M):Interval:<value> incorrectly formatted or
+  out of range`. The
+  error points at the value, not the constraint, which makes it easy to
+  mis-diagnose as an XML-encoding bug. macOS's launchd has no equivalent
+  minimum; we pay one minute of latency on the first restart after a crash on
+  Windows.
+- **Punctuation keys in menu accelerators need their named form.**
+  `"CmdOrCtrl+,"` parses on macOS but silently fails on Windows
+  (`keyboard-types` requires `"Comma"` for the `,` key, `"Period"` for `.`,
+  etc.). The menu item builds fine and the menu renders fine; only the
+  accelerator chord doesn't fire. Symptom: user reports "the shortcut doesn't
+  work, I have to click the menu."
+- **Menu accelerators don't fire from a webview-focused window on Windows.**
+  Even after fixing the key-name issue above, WebView2 captures keyboard events
+  before they reach the host's menu chain. The preferences chord is bound via
+  `tauri-plugin-global-shortcut` instead — an OS-level hotkey, gated on
+  `window.is_focused()` so it matches the menu-accelerator semantic of "fires
+  only when the app is foregrounded." See `register_preferences_shortcut_plugin`
+  in `lib.rs`.
+- **`set_mode_only` must preserve the `<Enabled>` flag.** A naive
+  `/Create /XML /F` with hardcoded `<Enabled>true</Enabled>` would silently
+  re-enable a daemon the user had Stopped — toggling the autostart-at-login
+  preference would un-stop the daemon. The current impl reads `is_loaded()` and
+  threads the result through `render_task_xml`.
+- **`Status:` ≠ enabled state on Windows.** `schtasks /Query /FO LIST /V` emits
+  both `Status:` (Ready / Running / Disabled / Queued — operational state) and
+  `Scheduled Task State:` (Enabled / Disabled — persistent preference). The
+  supervisor's `is_loaded` parses the **latter**; using Status alone would
+  falsely mark a Ready-but-Enabled task as not-loaded.
+- **`schtasks /End` doesn't cascade to children.** Task Scheduler kills only the
+  action's root process; children become orphans. The `psycheros-daemon-runner`
+  sidecar solves this by enrolling itself + deno into a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the kernel cascades the kill when the
+  runner dies. Don't replace the runner with a plain shell wrapper without
+  rebuilding this guarantee.
+- **`cargo run` needs `default-run = "psycheros-launcher"`.** With two `[[bin]]`
+  targets (launcher + daemon-runner) Cargo can't pick a default;
+  `cargo tauri dev` shells out to `cargo run` and fails without the manifest
+  key.
+- **`deno cache` needs `--allow-scripts` for psycheros's native deps.**
+  `onnxruntime-node` (embeddings) and `sharp` (image processing) publish
+  lifecycle (postinstall) scripts that Deno 2.x blocks by default for security.
+  Without the flag, first-run's warm-cache step can fail with
+  `error: failed to run scripts for packages:
+  onnxruntime-node` and a
+  `node:module` stack trace — the script DID run, but Deno still reports the
+  package's lifecycle as un-finalized. `bundle::warm_deno_cache` passes the
+  broad form (`--allow-scripts`, not `--allow-scripts=npm:onnxruntime-node`)
+  because we trust the pinned Psycheros source we just cloned and the daemon
+  itself runs with `-A` anyway.
+- **Every `Command::new` on Windows needs `CREATE_NO_WINDOW`.** Release builds
+  have `windows_subsystem = "windows"` (no console), so any console-subsystem
+  subprocess (`schtasks`, `whoami`, `netstat`, `tasklist`, `git`, `deno`,
+  `where`, etc.) **allocates a new console window** because there's no parent
+  console to inherit. The daemon- status watcher polls `schtasks /Query` every
+  two seconds, producing a non-stop flicker of ghost cmd windows for the user.
+  Route every spawn through `proc::hidden_command` — it applies
+  `CREATE_NO_WINDOW` on Windows and is a pass-through elsewhere. **Don't** route
+  `open_path` (the "Reveal in Explorer" affordance) through it — the user
+  _wants_ that window. The bug is invisible in `cargo tauri dev` because debug
+  builds default to `windows_subsystem = "console"` and subprocesses inherit the
+  dev launcher's console; only release MSI installs surface it.
+- **Don't add the daemon-runner as an `externalBin`.** It's a `[[bin]]` target
+  in the same crate, so `cargo tauri build` auto-includes the compiled
+  `target/release/psycheros-daemon-runner.exe` in the MSI alongside the main
+  launcher exe. Listing it in `externalBin` too results in a WiX
+  duplicate-component error (`psycheros_daemon_runner.exe` vs
+  `psycheros_daemon_runner` — same final filename, same install dir, light.exe
+  rejects the link). The runtime resolver finds the runner via
+  `current_exe().parent().join(...)` — works in both dev (`target/debug`
+  siblings) and prod (INSTALLDIR siblings).
 
 ## Cross-platform considerations
 
-| Platform | Supervisor           | Sudo needed?              | Logs                                |
-| -------- | -------------------- | ------------------------- | ----------------------------------- |
-| macOS    | launchd (user agent) | Never                     | Files at `<data>/logs/daemon.*.log` |
-| Linux    | systemd user unit    | Once, for `enable-linger` | `journalctl --user -u psycheros`    |
-| Windows  | Task Scheduler       | Never (user-level task)   | Redirected stdout files via wrapper |
+| Platform | Supervisor           | Sudo needed?              | Logs                                                          |
+| -------- | -------------------- | ------------------------- | ------------------------------------------------------------- |
+| macOS    | launchd (user agent) | Never                     | Files at `<data>/logs/daemon.*.log`                           |
+| Linux    | systemd user unit    | Once, for `enable-linger` | `journalctl --user -u psycheros`                              |
+| Windows  | Task Scheduler       | Never (user-level task)   | Flat files at `<data>/logs/daemon.*.log` (via runner sidecar) |
 
 The launchd impl is the reference. Other OSes follow the same trait contract but
 the under-the-hood mechanics differ — see per-OS module doc comments and

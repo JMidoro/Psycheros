@@ -22,11 +22,68 @@ pub mod config;
 pub mod daemon;
 pub mod http;
 pub mod paths;
+pub mod proc;
 pub mod supervisor;
 
 use tauri::Manager;
+use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 use app::state::AppState;
+
+/// Build the global-shortcut plugin instance pre-configured with the
+/// preferences chord (Ctrl+, on Windows/Linux, Cmd+, on macOS) bound
+/// to the same `handle_menu_event` path the menu accelerator targets.
+///
+/// We register the binding at plugin-build time (via `with_shortcut`)
+/// rather than dynamically inside `setup()` because the plugin's
+/// builder API treats handlers as construction-time inputs — the
+/// shortcut and its handler ship together as a single registered
+/// unit.
+///
+/// Window-focus gating happens inside the handler: if the main
+/// window isn't focused (i.e., the user is in a different app), the
+/// chord is a no-op. This restores the menu-accelerator semantic
+/// "fires only when the app is foregrounded" that Tauri 2 macOS
+/// menus do natively and Tauri 2 Windows menus do not (WebView2
+/// captures the chord before the menu chain sees it).
+fn register_preferences_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    // Ctrl on Windows/Linux, Cmd (Super) on macOS. The plugin's
+    // `Modifiers` are explicit per-OS rather than a `CmdOrCtrl`
+    // alias — match the platform conditionally so the binding lands
+    // on the right modifier without a cross-platform string-parse
+    // layer.
+    #[cfg(target_os = "macos")]
+    let modifiers = Modifiers::SUPER;
+    #[cfg(not(target_os = "macos"))]
+    let modifiers = Modifiers::CONTROL;
+
+    let preferences_shortcut = Shortcut::new(Some(modifiers), Code::Comma);
+
+    tauri_plugin_global_shortcut::Builder::new()
+        .with_shortcut(preferences_shortcut)
+        .expect("preferences shortcut should be a valid Modifier+Code pair")
+        .with_handler(move |app, shortcut, event| {
+            if shortcut != &preferences_shortcut {
+                return;
+            }
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            // Focus gate: this is an OS-level hotkey, so it fires
+            // even when our app isn't on top. Match menu-accelerator
+            // semantics by ignoring the chord when the user is
+            // looking at someone else's window.
+            let focused = app
+                .get_webview_window("main")
+                .and_then(|w| w.is_focused().ok())
+                .unwrap_or(false);
+            if !focused {
+                return;
+            }
+            app::handle_menu_event(app, app::menu::PREFERENCES_ID);
+        })
+        .build()
+}
 
 /// Headless smoke check — exercises the command surface without
 /// starting a Tauri webview, exits 0 on success. Intended as a CI
@@ -171,7 +228,14 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        // Global shortcut plugin: registers an OS-level Ctrl+, /
+        // Cmd+, hotkey so the preferences chord fires even when
+        // WebView2 (Windows) has focus and would otherwise swallow
+        // the keystroke before the menu accelerator chain sees it.
+        // The handler is gated on window focus so we don't react when
+        // the user is in a different app.
+        .plugin(register_preferences_shortcut_plugin());
 
     // WebDriver server for E2E testing — opt-in via the `webdriver`
     // cargo feature, off in release builds. When enabled, exposes a
@@ -270,8 +334,11 @@ pub fn run() {
                 app::handle_menu_event(&menu_handle, &event.id().0);
             });
 
-            // macOS menu-bar / status-bar tray icon. Adds a persistent
-            // presence with state-aware menu (Start/Stop/View logs/Quit).
+            // System tray icon — macOS menu bar, Windows notification
+            // area. Adds a persistent presence with state-aware menu
+            // (Start/Stop/View logs/Quit). The icon asset and template-
+            // mode are branched per-OS in `app::tray::install` so the
+            // Windows render isn't an illegible monochrome blob.
             // Errors logged but non-fatal: the launcher still works
             // without the tray.
             if let Err(e) = app::tray::install(app.handle()) {
@@ -279,9 +346,11 @@ pub fn run() {
             }
 
             // Apply the initial window-visibility + activation policy
-            // choice from the launch context. Auto-started via launchd
-            // (--no-window) boots silent into the tray; user-launched
-            // shows the window with the dock icon.
+            // choice from the launch context. Auto-started by the OS
+            // supervisor (launchd on macOS, Task Scheduler on Windows)
+            // via `--no-window`: boots silent into the tray. User-
+            // launched (no flag): shows the window with the dock /
+            // taskbar icon.
             app::set_manager_visible(app.handle(), show_window_on_start);
 
             // Daemon-status watcher.
@@ -310,8 +379,20 @@ pub fn run() {
             // while the process is already running. Either is a strong
             // signal that the user wants the window back, so we re-show
             // it and flip the activation policy back to Regular.
+            //
+            // macOS-only: Tauri 2 only emits `RunEvent::Reopen` on
+            // macOS (it's a Cocoa NSApplicationDelegate notification).
+            // On Windows the equivalent — re-running the .exe while one
+            // instance already lives — is normally handled by a single-
+            // instance plugin or by ignoring the second process. We
+            // ignore it for now; the `Reopen` arm stays cfg'd out.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 app::set_manager_visible(app_handle, true);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app_handle, event);
             }
         });
 }

@@ -8,7 +8,6 @@
 //! `io::Error`); we stringify at the IPC boundary.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
@@ -22,8 +21,11 @@ use crate::config::{self, LauncherConfig};
 use crate::daemon::{self, DaemonStatus};
 use crate::http;
 use crate::paths;
+use crate::proc::hidden_command;
 #[cfg(target_os = "macos")]
 use crate::supervisor::launcher_agent;
+#[cfg(target_os = "windows")]
+use crate::supervisor::launcher_agent_win;
 use crate::supervisor::{default_supervisor, DaemonConfig, RuntimeInfo, ServiceSupervisor};
 
 // ---------------------------------------------------------------------------
@@ -54,7 +56,8 @@ pub fn daemon_status() -> DaemonStatus {
 /// settings file is the single source of truth and may have been edited
 /// via psycheros's own UI between install steps.
 #[tauri::command]
-pub fn install_autostart() -> Result<DaemonStatus, String> {
+pub fn install_autostart(app: AppHandle) -> Result<DaemonStatus, String> {
+    stage_windows_runner_if_needed(&app)?;
     let cfg = build_daemon_config()?;
     default_supervisor()
         .install_autostart(&cfg)
@@ -71,7 +74,8 @@ pub fn install_autostart() -> Result<DaemonStatus, String> {
 ///
 /// Same assumption about `save_initial_config` as `install_autostart`.
 #[tauri::command]
-pub fn install_manual() -> Result<DaemonStatus, String> {
+pub fn install_manual(app: AppHandle) -> Result<DaemonStatus, String> {
+    stage_windows_runner_if_needed(&app)?;
     let cfg = build_daemon_config()?;
     default_supervisor()
         .install_manual(&cfg)
@@ -79,6 +83,28 @@ pub fn install_manual() -> Result<DaemonStatus, String> {
     persist_daemon_mode(config::DaemonMode::Manual);
     install_launcher_agent_best_effort();
     Ok(daemon::probe())
+}
+
+/// Self-heal: stage the daemon-runner sidecar into the stable launcher-
+/// data-dir path if it isn't already there. Catches the "user installed
+/// the launcher before the runner sidecar existed, then upgraded"
+/// scenario — `needs_first_run` returns false because the source clone
+/// is intact, so the standard first-run staging path never re-runs.
+///
+/// No-op on macOS / Linux (those platforms don't use a runner) and when
+/// the runner is already present.
+fn stage_windows_runner_if_needed(_app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let dest = paths::bundled_runner_path();
+        if dest.exists() {
+            return Ok(());
+        }
+        let sidecar_runner = resolve_sidecar_runner(_app)?;
+        bundle::stage_bundled_binary(&sidecar_runner, &dest)
+            .map_err(|e| format!("stage daemon runner: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Uninstall — unregisters and stops the daemon. Mode-agnostic; works
@@ -108,11 +134,20 @@ fn install_launcher_agent_best_effort() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn install_launcher_agent_best_effort() {
-    // Linux + Windows launcher-agent stubs not yet implemented. The
-    // daemon supervisor stubs already cover the install flow's main
-    // path; the launcher agent is a macOS-only addition for v1.0.
+    match launcher_agent_win::install() {
+        Ok(true) => eprintln!("[launcher] launcher agent installed"),
+        Ok(false) => {} // dev-mode skip, message already logged
+        Err(e) => eprintln!("[launcher] launcher agent install failed: {e}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn install_launcher_agent_best_effort() {
+    // Linux launcher-agent stub not yet implemented. The daemon
+    // supervisor stub also defers; the launcher agent will follow
+    // whenever the systemd impl lands.
 }
 
 /// Counterpart to [`install_launcher_agent_best_effort`] — called on
@@ -125,7 +160,14 @@ fn uninstall_launcher_agent_best_effort() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn uninstall_launcher_agent_best_effort() {
+    if let Err(e) = launcher_agent_win::uninstall() {
+        eprintln!("[launcher] launcher agent uninstall failed: {e}");
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn uninstall_launcher_agent_best_effort() {}
 
 /// Start the daemon. Universal control — works for both autostart
@@ -321,7 +363,7 @@ fn setup_artifact_error(what: &str, expected_path: &Path) -> String {
 /// we don't return stale entries.
 fn find_on_path(binary: &str) -> Option<PathBuf> {
     let lookup_cmd = if cfg!(windows) { "where" } else { "which" };
-    let out = Command::new(lookup_cmd).arg(binary).output().ok()?;
+    let out = hidden_command(lookup_cmd).arg(binary).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -571,6 +613,18 @@ fn run_first_run_blocking(app: AppHandle) -> Result<(), String> {
     bundle::stage_bundled_deno(&sidecar_deno, &deno_dest)
         .map_err(|e| format!("stage bundled deno: {e}"))?;
 
+    // Phase 2.5 (Windows-only): stage the daemon-runner sidecar so the
+    // Task Scheduler action has a stable path to invoke. macOS / Linux
+    // service definitions reference deno directly via their plist /
+    // unit-file Exec entries — no runner needed there.
+    #[cfg(target_os = "windows")]
+    {
+        let sidecar_runner = resolve_sidecar_runner(&app)?;
+        let runner_dest = paths::bundled_runner_path();
+        bundle::stage_bundled_binary(&sidecar_runner, &runner_dest)
+            .map_err(|e| format!("stage daemon runner: {e}"))?;
+    }
+
     // Phase 3: warm Deno's dep cache. The slow one.
     let _ = app.emit(
         "first-run-progress",
@@ -603,30 +657,38 @@ fn run_first_run_blocking(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve the embedded Deno sidecar.
+/// Resolve a sidecar binary that ships as a Tauri `externalBin`. Tauri
+/// stages these under the basename of the config entry in the runtime
+/// resource dir — for `"binaries/deno"` the file lands as `deno` (or
+/// `deno.exe` on Windows). Some prod packaging keeps the
+/// `<basename>-<triple>` suffix instead, so we try the basename first
+/// (the common case) and the triple-suffixed forms as fallbacks.
 ///
-/// Tauri 2 stages `externalBin` entries in the runtime resource dir under
-/// the basename of the config entry — for `"binaries/deno"` the file
-/// lands as `deno` (or `deno.exe` on Windows), at least in dev mode.
-/// Some prod packaging keeps the `<basename>-<triple>` suffix instead.
-/// I try the basename first (most common) and the triple-suffixed forms
-/// as fallbacks, so the function works across both layouts.
-fn resolve_sidecar_deno(app: &AppHandle) -> Result<PathBuf, String> {
+/// In dev mode (`cargo tauri dev`) the sidecar is staged into a
+/// `target/debug` adjacent directory by Tauri's tooling; the resource-
+/// path resolver picks it up via the same `BaseDirectory::Resource`
+/// lookup.
+fn resolve_sidecar_binary(
+    app: &AppHandle,
+    basename: &str,
+    extra_candidates: &[&str],
+) -> Result<PathBuf, String> {
     let triple = current_target_triple();
     if triple.is_empty() {
         return Err(format!(
-            "no bundled Deno sidecar for target (os={}, arch={})",
+            "no bundled {basename} sidecar for target (os={}, arch={})",
             std::env::consts::OS,
             std::env::consts::ARCH,
         ));
     }
     let exe = if cfg!(windows) { ".exe" } else { "" };
-    let candidates = [
-        format!("deno{exe}"),
-        format!("deno-{triple}{exe}"),
-        format!("binaries/deno{exe}"),
-        format!("binaries/deno-{triple}{exe}"),
+    let mut candidates: Vec<String> = vec![
+        format!("{basename}{exe}"),
+        format!("{basename}-{triple}{exe}"),
+        format!("binaries/{basename}{exe}"),
+        format!("binaries/{basename}-{triple}{exe}"),
     ];
+    candidates.extend(extra_candidates.iter().map(|s| s.to_string()));
     for name in &candidates {
         if let Ok(p) = app.path().resolve(name, BaseDirectory::Resource) {
             if p.exists() {
@@ -635,9 +697,42 @@ fn resolve_sidecar_deno(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
     Err(format!(
-        "bundled Deno sidecar not found in app resources (checked: {})",
+        "bundled {basename} sidecar not found in app resources (checked: {})",
         candidates.join(", "),
     ))
+}
+
+/// Resolve the bundled Deno sidecar. Thin wrapper around
+/// [`resolve_sidecar_binary`].
+fn resolve_sidecar_deno(app: &AppHandle) -> Result<PathBuf, String> {
+    resolve_sidecar_binary(app, "deno", &[])
+}
+
+/// Resolve the Windows-only `psycheros-daemon-runner` sidecar staged via
+/// Tauri's `externalBin`. Falls back to the launcher's `target/debug`
+/// sibling for `cargo tauri dev` where the binary builds via Cargo's
+/// normal `[[bin]]` mechanism but isn't bundled into the resource dir.
+#[cfg(target_os = "windows")]
+fn resolve_sidecar_runner(app: &AppHandle) -> Result<PathBuf, String> {
+    // Try the bundled-resource form first (production / staged dev
+    // builds where setup.ps1 copied the binary into
+    // `src-tauri/binaries/`).
+    if let Ok(p) = resolve_sidecar_binary(app, "psycheros-daemon-runner", &[]) {
+        return Ok(p);
+    }
+    // Dev fallback: sibling of the launcher's own .exe in target/.
+    if let Ok(launcher_exe) = std::env::current_exe() {
+        if let Some(parent) = launcher_exe.parent() {
+            let candidate = parent.join("psycheros-daemon-runner.exe");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err("psycheros-daemon-runner.exe missing. In dev: run \
+         `cargo build --bin psycheros-daemon-runner` first. In prod: \
+         setup.ps1 should have staged it into src-tauri/binaries/."
+        .to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1148,13 @@ pub fn open_path(path: String) -> Result<(), String> {
     } else {
         "xdg-open"
     };
-    Command::new(opener)
+    // Deliberately use std::process::Command directly (not hidden_command)
+    // — the user clicked "Reveal" / "Open in file manager" and the
+    // window IS the affordance they want. explorer.exe is a windowed-
+    // subsystem app so CREATE_NO_WINDOW wouldn't hide its file-manager
+    // window anyway, but routing through hidden_command would be
+    // misleading at the call-site level.
+    std::process::Command::new(opener)
         .arg(&p)
         .spawn()
         .map_err(|e| format!("spawn {opener}: {e}"))?;
@@ -1585,7 +1686,7 @@ fn run_migration_if_present(
     use std::process::Stdio;
     use std::sync::mpsc::channel;
 
-    let mut child = std::process::Command::new(&deno)
+    let mut child = hidden_command(&deno)
         .args(["run", "-A"])
         .arg(&script)
         .arg(data_dir)
@@ -1829,15 +1930,37 @@ pub struct PortConflict {
 /// alternating lines — easier to parse than the default columnar
 /// format which varies across macOS versions.
 ///
-/// Linux + Windows: returns `None` for now (the Linux/Windows
-/// supervisor stubs don't get to the port-conflict state either —
-/// see docs/supervisors.md).
+/// Windows: uses `netstat -ano` to find the PID holding the port,
+/// then `tasklist /FI "PID eq <pid>" /FO CSV /NH` to resolve the
+/// process image name. Both ship with every supported Windows
+/// release; neither requires admin.
+///
+/// Linux: returns `None` for now (the systemd-user supervisor stub
+/// doesn't get to the port-conflict state either — see
+/// docs/supervisors.md).
 #[tauri::command]
 pub fn check_port_conflict(port: u16) -> Option<PortConflict> {
-    if !cfg!(target_os = "macos") {
-        return None;
+    // One per-OS helper per branch — keeps each platform's flow
+    // linear, lets cargo clippy be strict (no needless returns), and
+    // makes the unused-on-this-OS arms obvious to readers.
+    #[cfg(target_os = "macos")]
+    {
+        check_port_conflict_macos(port)
     }
-    let out = Command::new("lsof")
+    #[cfg(target_os = "windows")]
+    {
+        check_port_conflict_windows(port)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn check_port_conflict_macos(port: u16) -> Option<PortConflict> {
+    let out = hidden_command("lsof")
         .args([
             "-i",
             &format!(":{port}"),
@@ -1854,6 +1977,86 @@ pub fn check_port_conflict(port: u16) -> Option<PortConflict> {
     parse_lsof_fielded(&String::from_utf8_lossy(&out.stdout))
 }
 
+#[cfg(target_os = "windows")]
+fn check_port_conflict_windows(port: u16) -> Option<PortConflict> {
+    let netstat = hidden_command("netstat").args(["-ano"]).output().ok()?;
+    if !netstat.status.success() {
+        return None;
+    }
+    let pid = parse_netstat_listener_pid(&String::from_utf8_lossy(&netstat.stdout), port)?;
+    let command = resolve_pid_image_name(pid).unwrap_or_else(|| format!("pid {pid}"));
+    Some(PortConflict { pid, command })
+}
+
+/// Resolve a Windows process image name from its PID via
+/// `tasklist /FI "PID eq <pid>" /FO CSV /NH`. Returns `None` on any
+/// failure — the caller falls back to "pid N" copy. Split out so the
+/// unit test can drive the parsing logic without a live process.
+#[cfg(target_os = "windows")]
+fn resolve_pid_image_name(pid: u32) -> Option<String> {
+    let out = hidden_command("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_tasklist_csv_image(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Parse `netstat -ano` output, return the PID of the first LISTENING
+/// TCP socket bound to `port`. `netstat -ano` rows look like:
+///
+/// ```text
+///   TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       12345
+///   TCP    [::]:3000              [::]:0                 LISTENING       12345
+/// ```
+///
+/// We match on TCP + the local-address column ending in `:PORT` + the
+/// LISTENING state. UDP is ignored (no concept of LISTENING) and
+/// non-LISTENING TCP rows (ESTABLISHED, TIME_WAIT) are ignored — only
+/// the listener "owns" the port.
+fn parse_netstat_listener_pid(text: &str, port: u16) -> Option<u32> {
+    let suffix = format!(":{port}");
+    for line in text.lines() {
+        let line = line.trim_start();
+        if !line.starts_with("TCP") {
+            continue;
+        }
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // Expected layout: [TCP, local_addr, foreign_addr, state, pid].
+        if fields.len() < 5 {
+            continue;
+        }
+        if fields[3] != "LISTENING" {
+            continue;
+        }
+        if !fields[1].ends_with(&suffix) {
+            continue;
+        }
+        if let Ok(pid) = fields[4].parse::<u32>() {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// Parse a single-row `tasklist /FO CSV /NH` line into the image name
+/// (first quoted column). The format is `"image","pid","session"...`
+/// — strip the leading quote, take up to the next quote.
+#[cfg(target_os = "windows")]
+fn parse_tasklist_csv_image(text: &str) -> Option<String> {
+    let first_line = text.lines().next()?.trim();
+    let rest = first_line.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let image = &rest[..end];
+    if image.is_empty() {
+        None
+    } else {
+        Some(image.to_string())
+    }
+}
+
 /// Parse `lsof -F pc` output into a PortConflict.
 ///
 /// Fielded output looks like:
@@ -1868,6 +2071,7 @@ pub fn check_port_conflict(port: u16) -> Option<PortConflict> {
 /// We return the first p/c pair (lsof can return multiple if several
 /// processes bind the same port; the first is good enough for the
 /// "blame the offender" UX).
+#[cfg(target_os = "macos")]
 fn parse_lsof_fielded(text: &str) -> Option<PortConflict> {
     let mut pid: Option<u32> = None;
     let mut command: Option<String> = None;
@@ -1905,7 +2109,7 @@ pub fn install_xcode_clt() -> Result<(), String> {
                 .to_string(),
         );
     }
-    Command::new("xcode-select")
+    hidden_command("xcode-select")
         .arg("--install")
         .spawn()
         .map_err(|e| format!("spawn xcode-select: {e}"))?;
@@ -1933,6 +2137,7 @@ fn current_target_triple() -> &'static str {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_lsof_fielded_output() {
         let text = "p12345\ncnode\n";
@@ -1941,6 +2146,7 @@ mod tests {
         assert_eq!(conflict.command, "node");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_lsof_with_multiple_processes() {
         let text = "p12345\ncfirst-binder\np67890\ncsecond-binder";
@@ -1950,16 +2156,111 @@ mod tests {
         assert_eq!(conflict.command, "first-binder");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn returns_none_on_empty_lsof_output() {
         assert!(parse_lsof_fielded("").is_none());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn returns_none_when_only_one_field_present() {
         // PID without a command line is incomplete; we'd rather return
         // nothing than render "pid 12345 (?)" in the warning panel.
         assert!(parse_lsof_fielded("p12345").is_none());
+    }
+
+    // ─── netstat parser (Windows port-conflict detection) ──────────────
+
+    #[test]
+    fn parses_netstat_ipv4_listener() {
+        // Real netstat -ano output, IPv4 listener row.
+        let canned = "\nActive Connections\n\n\
+                      \x20 Proto  Local Address          Foreign Address        State           PID\n\
+                      \x20 TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       12345\n\
+                      \x20 TCP    127.0.0.1:54321        127.0.0.1:3000         ESTABLISHED     67890\n";
+        assert_eq!(parse_netstat_listener_pid(canned, 3000), Some(12345));
+    }
+
+    #[test]
+    fn parses_netstat_ipv6_listener() {
+        // IPv6 listener (the row Tauri-style services usually print).
+        let canned =
+            "  TCP    [::]:3000              [::]:0                 LISTENING       12345\n";
+        assert_eq!(parse_netstat_listener_pid(canned, 3000), Some(12345));
+    }
+
+    #[test]
+    fn netstat_ignores_non_listening_rows() {
+        // ESTABLISHED/TIME_WAIT rows can also reference the same port
+        // as the foreign address — those don't OWN the port. Only
+        // LISTENING rows should match.
+        let canned = "  TCP    127.0.0.1:54321        127.0.0.1:3000         ESTABLISHED     67890\n\
+                      \x20 TCP    127.0.0.1:54322        127.0.0.1:3000         TIME_WAIT       0\n";
+        assert!(parse_netstat_listener_pid(canned, 3000).is_none());
+    }
+
+    #[test]
+    fn netstat_returns_none_when_port_not_bound() {
+        let canned =
+            "  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       11111\n";
+        assert!(parse_netstat_listener_pid(canned, 3000).is_none());
+    }
+
+    #[test]
+    fn netstat_ignores_udp_rows() {
+        // UDP doesn't have a LISTENING state; netstat shows `*:*` for
+        // the foreign address. We bind TCP, so UDP listeners are
+        // irrelevant even if they happen to share the port number.
+        let canned =
+            "  UDP    0.0.0.0:3000           *:*                                    99999\n";
+        assert!(parse_netstat_listener_pid(canned, 3000).is_none());
+    }
+
+    #[test]
+    fn netstat_returns_first_listener_when_dual_stack() {
+        // A daemon that binds both IPv4 and IPv6 produces two rows
+        // with the same PID; either is fine to return.
+        let canned = "  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       42\n\
+                      \x20 TCP    [::]:3000              [::]:0                 LISTENING       42\n";
+        assert_eq!(parse_netstat_listener_pid(canned, 3000), Some(42));
+    }
+
+    // ─── tasklist CSV parser (Windows process-name resolution) ──────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parses_tasklist_csv_image() {
+        let canned = "\"deno.exe\",\"12345\",\"Console\",\"1\",\"42,116 K\"\r\n";
+        assert_eq!(
+            parse_tasklist_csv_image(canned).as_deref(),
+            Some("deno.exe")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tasklist_handles_image_with_spaces() {
+        // Windows allows spaces in image names ("Microsoft Edge.exe").
+        // CSV quoting protects them.
+        let canned = "\"Microsoft Edge.exe\",\"23456\",\"Console\",\"1\",\"112,348 K\"\r\n";
+        assert_eq!(
+            parse_tasklist_csv_image(canned).as_deref(),
+            Some("Microsoft Edge.exe")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tasklist_returns_none_on_empty_input() {
+        assert!(parse_tasklist_csv_image("").is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tasklist_returns_none_on_malformed_row() {
+        // Missing closing quote — defensive against unexpected output.
+        assert!(parse_tasklist_csv_image("\"deno.exe").is_none());
     }
 
     // ─── Timestamps + civil_from_days ──────────────────────────────────

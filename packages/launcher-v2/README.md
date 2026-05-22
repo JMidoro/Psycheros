@@ -4,8 +4,8 @@ Desktop app that installs and supervises Psycheros as a persistent background
 service on macOS, Linux, and Windows — then gives you a single window onto the
 chat UI when you want to talk to your entity.
 
-> **Status: pre-release scaffold.** Architecture is locked, macOS supervisor is
-> implemented, cross-platform supervisors are stubbed. See
+> **Status: pre-release scaffold.** Architecture is locked, macOS and Windows
+> supervisors are implemented, Linux (systemd-user) remains stubbed. See
 > [`CHANGELOG.md`](CHANGELOG.md) and
 > [`docs/architecture.md`](docs/architecture.md) for what works today vs. what's
 > coming.

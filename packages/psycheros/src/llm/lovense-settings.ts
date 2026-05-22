@@ -35,6 +35,8 @@ export interface LovenseSettings {
   enabled: boolean;
   /** Bridge connection settings */
   connection: LovenseConnection;
+  /** Custom instructions injected into context only when a Lovense device is connected */
+  customInstructions: string;
 }
 
 // =============================================================================
@@ -52,6 +54,7 @@ export function getDefaultLovenseSettings(): LovenseSettings {
       port: 34568,
       secure: true,
     },
+    customInstructions: "",
   };
 }
 

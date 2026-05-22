@@ -101,6 +101,7 @@ import {
   handleConnectionsSettingsFragment,
   handleConsolidationFragment,
   handleConsolidationRun,
+  handleControlHomeDevice,
   handleConversationListFragment,
   handleConversationView,
   handleCORS,
@@ -157,6 +158,7 @@ import {
   handleHealth,
   handleImportSillyTavernLorebook,
   handleIndex,
+  handleInstructionsFragment,
   handleListAnchorImages,
   handleListBackgrounds,
   handleListConversations,
@@ -195,6 +197,7 @@ import {
   handleSaveLLMSettings,
   handleSaveLovenseSettings,
   handleSaveMemory,
+  handleSaveMemoryInstructions,
   handleSavePromptLabel,
   handleSaveSASettings,
   handleSaveSettingsFile,
@@ -1703,10 +1706,17 @@ export class Server {
       const conversationId = paginatedMessagesMatch[1];
       const url = new URL(request.url);
       const before = url.searchParams.get("before") || undefined;
+      const beforeId = url.searchParams.get("beforeId") || undefined;
       const limit = url.searchParams.get("limit")
         ? parseInt(url.searchParams.get("limit")!)
         : undefined;
-      return handleMessagesPaginated(ctx, conversationId, before, limit);
+      return handleMessagesPaginated(
+        ctx,
+        conversationId,
+        before,
+        beforeId,
+        limit,
+      );
     }
 
     // PUT /api/messages/:id - Update message content
@@ -1789,6 +1799,11 @@ export class Server {
     // POST /api/memories/consolidation/run - Run catch-up consolidation
     if (method === "POST" && path === "/api/memories/consolidation/run") {
       return await handleConsolidationRun(ctx);
+    }
+
+    // POST /api/memories/instructions - Save custom daily memory instructions
+    if (method === "POST" && path === "/api/memories/instructions") {
+      return await handleSaveMemoryInstructions(ctx, request);
     }
 
     // POST /api/entity-core/consolidation/run - Run consolidation from Entity Core context
@@ -2215,6 +2230,11 @@ export class Server {
       return await handleSaveHomeSettings(ctx, request);
     }
 
+    // POST /api/home-device/control - Direct user device control (safety override)
+    if (method === "POST" && path === "/api/home-device/control") {
+      return await handleControlHomeDevice(ctx, request);
+    }
+
     // ========================================
     // Lovense Settings API Routes
     // ========================================
@@ -2527,7 +2547,7 @@ export class Server {
         return await handleUpdateVault(ctx, vaultId, request);
       }
       if (method === "DELETE") {
-        return handleDeleteVault(ctx, vaultId);
+        return handleDeleteVault(ctx, vaultId, request);
       }
     }
 
@@ -2746,6 +2766,11 @@ export class Server {
     // GET /fragments/settings/memories/consolidation - Consolidation catch-up tab
     if (path === "/fragments/settings/memories/consolidation") {
       return await handleConsolidationFragment(ctx);
+    }
+
+    // GET /fragments/settings/memories/instructions - Custom daily memory instructions tab
+    if (path === "/fragments/settings/memories/instructions") {
+      return await handleInstructionsFragment(ctx);
     }
 
     // GET /fragments/settings/memories/search?q=... - Search memories

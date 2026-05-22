@@ -5,6 +5,10 @@
  * on every search query. Uses content-hash invalidation so embeddings
  * stay in sync with file content.
  *
+ * Long memories (>3000 chars) are split into overlapping chunks, each
+ * embedded independently. Short memories get a single embedding. All
+ * chunks for a memory share a `parent_key` for deduplication at search time.
+ *
  * Shares graph.db with GraphStore — SQLite WAL mode allows concurrent readers.
  * The sqlite-vec extension is loaded independently per connection.
  */
@@ -19,9 +23,7 @@ import {
 import type { LocalEmbedder } from "./mod.ts";
 import { EMBEDDING_DIMENSION } from "../graph/types.ts";
 import type { Granularity } from "../types.ts";
-
-/** Maximum content length to hash/embed (matches vectorSearch truncation). */
-const MAX_CONTENT_LENGTH = 3000;
+import { chunkContent, shouldChunk } from "./chunker.ts";
 
 // ---- SHA-256 hash utility (Deno built-in) ----
 
@@ -45,39 +47,50 @@ function serializeVector(vec: number[]): Uint8Array {
 
 export interface CachedEmbedding {
   memoryKey: string;
+  parentKey: string;
   memoryId: string;
   granularity: string;
   date: string;
   contentHash: string;
   embedding: number[];
+  chunkIndex: number;
+  totalChunks: number;
 }
 
 export interface EmbeddingCacheStats {
   totalCached: number;
+  totalChunks: number;
   byGranularity: Record<string, number>;
 }
 
 export interface CacheSearchResult {
   memoryKey: string;
   score: number;
+  chunkIndex: number;
 }
 
-// ---- Schema ----
+// ---- Schema (v2 — chunk support) ----
 
 const CACHE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS memory_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     memory_key TEXT NOT NULL UNIQUE,
+    parent_key TEXT NOT NULL DEFAULT '',
     memory_id TEXT NOT NULL,
     granularity TEXT NOT NULL,
     date TEXT NOT NULL,
     content_hash TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    total_chunks INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_memory_embeddings_memory_key
     ON memory_embeddings(memory_key);
+
+  CREATE INDEX IF NOT EXISTS idx_memory_embeddings_parent_key
+    ON memory_embeddings(parent_key);
 
   CREATE INDEX IF NOT EXISTS idx_memory_embeddings_granularity
     ON memory_embeddings(granularity);
@@ -104,7 +117,7 @@ export class EmbeddingCache {
   }
 
   /**
-   * Initialize the cache: create tables and load sqlite-vec extension.
+   * Initialize the cache: create tables, run migrations, and load sqlite-vec.
    * Must be called before any operations.
    */
   async initialize(): Promise<void> {
@@ -124,6 +137,9 @@ export class EmbeddingCache {
     this.loadVectorExtension();
     this.vectorAvailable = this.initializeVectorTable();
 
+    // Migrate v1 schema (no parent_key column) to v2
+    this.migrateSchema();
+
     this.initialized = true;
   }
 
@@ -135,58 +151,101 @@ export class EmbeddingCache {
   }
 
   /**
-   * Look up a cached embedding by memory key and content hash.
-   * Returns the embedding if found and hash matches, null otherwise.
+   * Look up cached embeddings by parent key and content hash.
+   * Returns all matching chunk embeddings, or null if hash mismatch or missing.
    */
-  get(memoryKey: string, currentContentHash: string): number[] | null {
-    if (!this.initialized) return null;
+  getByParent(
+    parentKey: string,
+    currentContentHash: string,
+  ): CachedEmbedding[] {
+    if (!this.initialized) return [];
 
     const stmt = this.db.prepare(
-      "SELECT e.content_hash FROM memory_embeddings e WHERE e.memory_key = ?",
+      "SELECT id, memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks FROM memory_embeddings WHERE parent_key = ? LIMIT 1",
     );
-    const row = stmt.get<{ content_hash: string }>(memoryKey);
+    const row = stmt.get<{
+      id: number;
+      memory_key: string;
+      parent_key: string;
+      memory_id: string;
+      granularity: string;
+      date: string;
+      content_hash: string;
+      chunk_index: number;
+      total_chunks: number;
+    }>(parentKey);
     stmt.finalize();
 
     if (!row || row.content_hash !== currentContentHash) {
-      return null; // Not cached or content changed
+      return [];
     }
 
-    // Hash matches — retrieve embedding from vec table
-    const vecStmt = this.db.prepare(
-      "SELECT v.rowid FROM memory_embeddings m JOIN vec_memory_embeddings v ON m.id = v.rowid WHERE m.memory_key = ?",
+    // Hash matches — retrieve all chunk embeddings for this parent
+    const idsStmt = this.db.prepare(
+      "SELECT id, memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks FROM memory_embeddings WHERE parent_key = ? ORDER BY chunk_index",
     );
-    const vecRow = vecStmt.get<{ rowid: number }>(memoryKey);
-    vecStmt.finalize();
+    const rows = idsStmt.all<
+      {
+        id: number;
+        memory_key: string;
+        parent_key: string;
+        memory_id: string;
+        granularity: string;
+        date: string;
+        content_hash: string;
+        chunk_index: number;
+        total_chunks: number;
+      }
+    >(parentKey);
+    idsStmt.finalize();
 
-    if (!vecRow) return null;
+    if (rows.length === 0) return [];
 
-    const embStmt = this.db.prepare(
-      "SELECT embedding FROM vec_memory_embeddings WHERE rowid = ?",
-    );
-    const embRow = embStmt.get<{ embedding: Uint8Array }>(vecRow.rowid);
-    embStmt.finalize();
+    const results: CachedEmbedding[] = [];
+    for (const r of rows) {
+      const embStmt = this.db.prepare(
+        "SELECT embedding FROM vec_memory_embeddings WHERE rowid = ?",
+      );
+      const embRow = embStmt.get<{ embedding: Uint8Array }>(r.id);
+      embStmt.finalize();
 
-    if (!embRow) return null;
+      if (!embRow) continue;
 
-    return Array.from(
-      new Float32Array(
-        embRow.embedding.buffer,
-        embRow.embedding.byteOffset,
-        embRow.embedding.byteLength / 4,
-      ),
-    );
+      results.push({
+        memoryKey: r.memory_key,
+        parentKey: r.parent_key,
+        memoryId: r.memory_id,
+        granularity: r.granularity,
+        date: r.date,
+        contentHash: r.content_hash,
+        embedding: Array.from(
+          new Float32Array(
+            embRow.embedding.buffer,
+            embRow.embedding.byteOffset,
+            embRow.embedding.byteLength / 4,
+          ),
+        ),
+        chunkIndex: r.chunk_index,
+        totalChunks: r.total_chunks,
+      });
+    }
+
+    return results;
   }
 
   /**
-   * Store an embedding for a memory. Upserts by memory_key.
+   * Store an embedding for a memory chunk. Upserts by memory_key.
    */
   put(
     memoryKey: string,
+    parentKey: string,
     memoryId: string,
     granularity: string,
     date: string,
     contentHash: string,
     embedding: number[],
+    chunkIndex: number,
+    totalChunks: number,
   ): void {
     if (!this.initialized) return;
 
@@ -194,12 +253,26 @@ export class EmbeddingCache {
 
     // Upsert metadata row
     this.db.exec(
-      `INSERT INTO memory_embeddings (memory_key, memory_id, granularity, date, content_hash, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO memory_embeddings (memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(memory_key) DO UPDATE SET
+         parent_key = excluded.parent_key,
          content_hash = excluded.content_hash,
+         chunk_index = excluded.chunk_index,
+         total_chunks = excluded.total_chunks,
          updated_at = excluded.updated_at`,
-      [memoryKey, memoryId, granularity, date, contentHash, now, now],
+      [
+        memoryKey,
+        parentKey,
+        memoryId,
+        granularity,
+        date,
+        contentHash,
+        chunkIndex,
+        totalChunks,
+        now,
+        now,
+      ],
     );
 
     // Get the rowid for this memory_key
@@ -226,32 +299,34 @@ export class EmbeddingCache {
   }
 
   /**
-   * Remove a cached embedding by memory key.
+   * Remove all cached embeddings for a parent key (all chunks).
    */
-  delete(memoryKey: string): void {
+  delete(parentKey: string): void {
     if (!this.initialized) return;
 
-    // Get rowid before deleting metadata
+    // Get all rowids for this parent
     const rowidStmt = this.db.prepare(
-      "SELECT id FROM memory_embeddings WHERE memory_key = ?",
+      "SELECT id FROM memory_embeddings WHERE parent_key = ?",
     );
-    const row = rowidStmt.get<{ id: number }>(memoryKey);
+    const rows = rowidStmt.all<{ id: number }>(parentKey);
     rowidStmt.finalize();
 
-    if (row) {
-      this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
-        row.id,
-      ]);
+    if (rows.length > 0) {
+      for (const row of rows) {
+        this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
+          row.id,
+        ]);
+      }
     }
 
-    this.db.exec("DELETE FROM memory_embeddings WHERE memory_key = ?", [
-      memoryKey,
+    this.db.exec("DELETE FROM memory_embeddings WHERE parent_key = ?", [
+      parentKey,
     ]);
   }
 
   /**
    * KNN search on cached embeddings.
-   * Returns top-k results sorted by similarity (best first).
+   * Returns top-k results deduplicated by parent_key, sorted by similarity.
    */
   search(
     queryEmbedding: number[],
@@ -263,7 +338,7 @@ export class EmbeddingCache {
     const serialized = serializeVector(queryEmbedding);
     const distance = maxDistance ?? 2.0; // cosine distance max is 2.0
     const sql = `
-      SELECT m.memory_key, m.memory_id, m.granularity, m.date, m.content_hash, v.distance
+      SELECT m.parent_key, m.chunk_index, v.distance
       FROM memory_embeddings m
       JOIN vec_memory_embeddings v ON m.id = v.rowid
       WHERE v.embedding MATCH ?
@@ -275,25 +350,39 @@ export class EmbeddingCache {
 
     const stmt = this.db.prepare(sql);
     const rows = stmt.all<{
-      memory_key: string;
-      memory_id: string;
-      granularity: string;
-      date: string;
-      content_hash: string;
+      parent_key: string;
+      chunk_index: number;
       distance: number;
     }>(serialized, k, distance, k);
     stmt.finalize();
 
-    return rows.map((row) => ({
-      memoryKey: row.memory_key,
-      score: Math.max(0, 1 - row.distance / 2),
-    }));
+    // Deduplicate by parent_key, keeping best score and its chunk index
+    const bestByParent = new Map<
+      string,
+      { memoryKey: string; score: number; chunkIndex: number }
+    >();
+
+    for (const row of rows) {
+      const score = Math.max(0, 1 - row.distance / 2);
+      const existing = bestByParent.get(row.parent_key);
+      if (!existing || score > existing.score) {
+        bestByParent.set(row.parent_key, {
+          memoryKey: row.parent_key,
+          score,
+          chunkIndex: row.chunk_index,
+        });
+      }
+    }
+
+    return Array.from(bestByParent.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
   }
 
   /**
-   * Get or compute an embedding for a memory.
-   * If cached and hash matches, returns cached embedding.
-   * Otherwise computes, caches, and returns the new embedding.
+   * Get or compute embeddings for a memory.
+   * Handles chunking for long memories transparently.
+   * Returns the first chunk's embedding for backward compatibility.
    */
   async getOrCompute(
     entry: {
@@ -307,53 +396,95 @@ export class EmbeddingCache {
   ): Promise<{ memoryKey: string; embedding: number[] } | null> {
     if (!this.initialized) return null;
 
-    const memoryKey = computeMemoryKey(entry);
-    const contentToHash = entry.content.substring(0, MAX_CONTENT_LENGTH);
-    const contentHash = await sha256Hex(contentToHash);
+    const parentKey = computeMemoryKey(entry);
+    const contentHash = await sha256Hex(entry.content);
 
-    // Check cache
-    const cached = this.get(memoryKey, contentHash);
-    if (cached) {
-      return { memoryKey, embedding: cached };
+    // Check cache validity by parent key with full content hash
+    const cached = this.getByParent(parentKey, contentHash);
+    if (cached.length > 0) {
+      return { memoryKey: parentKey, embedding: cached[0].embedding };
     }
 
-    // Compute embedding
-    const embedding = await embedder.embed(contentToHash);
-    if (!embedding) return null;
+    // Cache miss — delete any stale chunks
+    this.delete(parentKey);
 
-    // Cache it
-    this.put(
-      memoryKey,
-      `${entry.granularity}-${entry.date}`,
-      entry.granularity,
-      entry.date,
-      contentHash,
-      embedding,
-    );
+    if (!shouldChunk(entry.content)) {
+      // SHORT PATH: single embedding (unchanged behavior)
+      const embedding = await embedder.embed(entry.content);
+      if (!embedding) return null;
 
-    return { memoryKey, embedding };
+      this.put(
+        parentKey,
+        parentKey,
+        `${entry.granularity}-${entry.date}`,
+        entry.granularity,
+        entry.date,
+        contentHash,
+        embedding,
+        0,
+        1,
+      );
+      return { memoryKey: parentKey, embedding };
+    }
+
+    // LONG PATH: chunk and embed each chunk
+    const chunks = chunkContent(entry.content);
+    let firstEmbedding: number[] | null = null;
+
+    for (const chunk of chunks) {
+      const embedding = await embedder.embed(chunk.content);
+      if (!embedding) continue;
+
+      if (!firstEmbedding) firstEmbedding = embedding;
+
+      const memoryKey = chunks.length === 1
+        ? parentKey
+        : `${parentKey}#${chunk.index}`;
+
+      this.put(
+        memoryKey,
+        parentKey,
+        `${entry.granularity}-${entry.date}`,
+        entry.granularity,
+        entry.date,
+        contentHash,
+        embedding,
+        chunk.index,
+        chunks.length,
+      );
+    }
+
+    return firstEmbedding
+      ? { memoryKey: parentKey, embedding: firstEmbedding }
+      : null;
   }
 
   /**
    * Get cache statistics.
    */
   getStats(): EmbeddingCacheStats {
-    if (!this.initialized) return { totalCached: 0, byGranularity: {} };
+    if (!this.initialized) {
+      return { totalCached: 0, totalChunks: 0, byGranularity: {} };
+    }
 
     const stmt = this.db.prepare(
-      "SELECT granularity, COUNT(*) as count FROM memory_embeddings GROUP BY granularity",
+      "SELECT granularity, COUNT(DISTINCT parent_key) as count, COUNT(*) as chunk_count FROM memory_embeddings GROUP BY granularity",
     );
-    const rows = stmt.all<{ granularity: string; count: number }>();
+    const rows = stmt.all<
+      { granularity: string; count: number; chunk_count: number }
+    >();
     stmt.finalize();
 
     const byGranularity: Record<string, number> = {};
     let totalCached = 0;
+    let totalChunks = 0;
     for (const row of rows) {
       byGranularity[row.granularity] = row.count;
       totalCached += row.count;
+      totalChunks += row.chunk_count;
     }
 
-    return { totalCached, byGranularity };
+    return { totalCached, totalChunks, byGranularity };
   }
 
   /**
@@ -417,6 +548,45 @@ export class EmbeddingCache {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Migrate v1 schema (no parent_key) to v2 (with chunk support).
+   *
+   * All existing single-row embeddings become unchunked:
+   * parent_key = memory_key, chunk_index = 0, total_chunks = 1.
+   * Vec rowids are preserved through the copy.
+   *
+   * The content hash change (full content vs truncated 3000) will
+   * cause all entries to be invalidated on next getOrCompute(),
+   * triggering re-embedding with proper chunking.
+   */
+  private migrateSchema(): void {
+    const colInfo = this.db.prepare("PRAGMA table_info(memory_embeddings)");
+    const columns = colInfo.all<{ name: string }>().map((r) => r.name);
+    colInfo.finalize();
+
+    if (columns.includes("parent_key")) return;
+
+    console.error("[EmbeddingCache] Migrating schema: adding chunk support");
+
+    this.db.exec(
+      "ALTER TABLE memory_embeddings RENAME TO memory_embeddings_old",
+    );
+
+    this.db.exec(CACHE_SCHEMA);
+
+    // Migrate data: existing rows become unchunked
+    this.db.exec(`
+      INSERT INTO memory_embeddings
+        (memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks, created_at, updated_at)
+      SELECT memory_key, memory_key, memory_id, granularity, date, content_hash, 0, 1, created_at, updated_at
+      FROM memory_embeddings_old
+    `);
+
+    this.db.exec("DROP TABLE memory_embeddings_old");
+
+    console.error("[EmbeddingCache] Schema migration complete");
   }
 }
 

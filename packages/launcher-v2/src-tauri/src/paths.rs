@@ -102,6 +102,18 @@ pub fn bundled_deno_path() -> PathBuf {
     p
 }
 
+/// Windows-only: stable path for the `psycheros-daemon-runner` sidecar.
+/// Staged from the launcher's resources at install time so the Task
+/// Scheduler action references a path that survives launcher
+/// auto-update (the runner inside the .exe bundle moves on each
+/// upgrade). See `bundle::stage_bundled_binary`.
+#[cfg(target_os = "windows")]
+pub fn bundled_runner_path() -> PathBuf {
+    launcher_data_dir()
+        .join("bin")
+        .join("psycheros-daemon-runner.exe")
+}
+
 /// Where daemon logs go. Created by the OS supervisor on first start.
 pub fn log_dir() -> PathBuf {
     launcher_data_dir().join("logs")

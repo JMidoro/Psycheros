@@ -205,5 +205,11 @@ export function getEmbedder(): LocalEmbedder {
 }
 
 export { EmbeddingCache } from "./cache.ts";
-export type { CachedEmbedding, EmbeddingCacheStats } from "./cache.ts";
+export type {
+  CachedEmbedding,
+  CacheSearchResult,
+  EmbeddingCacheStats,
+} from "./cache.ts";
 export { computeMemoryKey } from "./cache.ts";
+export { chunkContent, shouldChunk } from "./chunker.ts";
+export type { MemoryChunk } from "./chunker.ts";

@@ -29,29 +29,31 @@ export const vaultTool: Tool = {
     function: {
       name: "vault",
       description:
-        "Manage documents in my Data Vault — create, read, append, list, and search. I use this to store reference material, notes, or any persistent content I want to search later. Documents can be global (always available) or scoped to the current chat.",
+        "Manage documents in my Data Vault — create, read, append, rewrite, list, and search. I use this to store reference material, notes, or any persistent content I want to search later. Documents can be global (always available) or scoped to the current chat.\n\nOperations:\n- 'write': create a NEW document. Errors if a document with the same title already exists — use 'append' or 'rewrite' instead.\n- 'append': add content to an existing document (creates it if missing). This is the DEFAULT for adding information.\n- 'rewrite': DESTRUCTIVE — replaces the entire document content. Only use when existing content is actively wrong or redundant and needs to be removed, not just to reorganize.\n- 'read': get full document content.\n- 'list': see all documents.\n- 'search': find relevant content by semantic search.\n\nPrefer 'append' over 'rewrite' in almost all cases. 'rewrite' should only be used as a last resort.",
       parameters: {
         type: "object",
         properties: {
           operation: {
             type: "string",
-            enum: ["write", "read", "append", "list", "search"],
+            enum: ["write", "read", "append", "rewrite", "list", "search"],
             description:
-              "The operation to perform. 'write' to create or replace a document, 'read' to get full content, 'append' to add content (creates if missing), 'list' to see all documents, 'search' to find relevant content.",
+              "The operation to perform. 'write' creates a new document (errors if it exists), 'read' gets full content, 'append' adds content (creates if missing), 'rewrite' replaces entire document (DESTRUCTIVE — use sparingly), 'list' shows all documents, 'search' finds relevant content.",
           },
           title: {
             type: "string",
-            description: "Document title (for write, read, append, search)",
+            description:
+              "Document title (for write, read, append, rewrite, search)",
           },
           content: {
             type: "string",
-            description: "Document content in markdown (for write, append)",
+            description:
+              "Document content in markdown (for write, append, rewrite)",
           },
           scope: {
             type: "string",
             enum: ["global", "chat", "all"],
             description:
-              "Document scope. 'global' (all chats), 'chat' (this conversation), 'all' (list only, shows both). Default: 'chat' for write/read/append, 'all' for list.",
+              "Document scope. 'global' (all chats), 'chat' (this conversation), 'all' (list only, shows both). Default: 'global' for write/read/append/rewrite, 'all' for list.",
           },
           query: {
             type: "string",
@@ -77,7 +79,7 @@ export const vaultTool: Tool = {
       return {
         toolCallId: ctx.toolCallId,
         content:
-          "Error: 'operation' is required. Use one of: write, read, append, list, search.",
+          "Error: 'operation' is required. Use one of: write, read, append, rewrite, list, search.",
         isError: true,
       };
     }
@@ -99,6 +101,8 @@ export const vaultTool: Tool = {
           return await executeRead(args, ctx, vaultManager);
         case "append":
           return await executeAppend(args, ctx, vaultManager);
+        case "rewrite":
+          return await executeRewrite(args, ctx, vaultManager);
         case "list":
           return executeList(args, ctx, vaultManager);
         case "search":
@@ -107,7 +111,7 @@ export const vaultTool: Tool = {
           return {
             toolCallId: ctx.toolCallId,
             content:
-              `Error: Unknown operation '${operation}'. Use one of: write, read, append, list, search.`,
+              `Error: Unknown operation '${operation}'. Use one of: write, read, append, rewrite, list, search.`,
             isError: true,
           };
       }
@@ -136,7 +140,7 @@ async function executeWrite(
 ): Promise<ToolResult> {
   const title = args.title;
   const content = args.content;
-  const scope = (args.scope as "global" | "chat") || "chat";
+  const scope = (args.scope as "global" | "chat") || "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -158,16 +162,11 @@ async function executeWrite(
   );
 
   if (existing) {
-    const result = await vaultManager.updateDocument(existing.id, {
-      title: title.trim(),
-      content: content.trim(),
-    });
     return {
       toolCallId: ctx.toolCallId,
-      content: `Updated vault document "${title.trim()}" (${
-        result?.chunkCount ?? 0
-      } chunks)`,
-      isError: false,
+      content:
+        `Error: Document "${title.trim()}" already exists. Use 'append' to add content or 'rewrite' to replace it.`,
+      isError: true,
     };
   }
 
@@ -194,7 +193,7 @@ async function executeRead(
   vaultManager: VaultManager,
 ): Promise<ToolResult> {
   const title = args.title;
-  const scope = (args.scope as "global" | "chat") || "chat";
+  const scope = (args.scope as "global" | "chat") || "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -233,7 +232,7 @@ async function executeAppend(
 ): Promise<ToolResult> {
   const title = args.title;
   const content = args.content;
-  const scope = (args.scope as "global" | "chat") || "chat";
+  const scope = (args.scope as "global" | "chat") || "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -280,6 +279,57 @@ async function executeAppend(
   return {
     toolCallId: ctx.toolCallId,
     content: `Appended to vault document "${title.trim()}" (${
+      result?.chunkCount ?? 0
+    } chunks)`,
+    isError: false,
+  };
+}
+
+async function executeRewrite(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+  vaultManager: VaultManager,
+): Promise<ToolResult> {
+  const title = args.title;
+  const content = args.content;
+  const scope = (args.scope as "global" | "chat") || "global";
+
+  if (typeof title !== "string" || title.trim().length === 0) {
+    return {
+      toolCallId: ctx.toolCallId,
+      content: "Error: 'title' is required and must be non-empty",
+      isError: true,
+    };
+  }
+  if (typeof content !== "string" || content.trim().length === 0) {
+    return {
+      toolCallId: ctx.toolCallId,
+      content: "Error: 'content' is required and must be non-empty",
+      isError: true,
+    };
+  }
+
+  const existing = vaultManager.listDocuments({ scope }).find(
+    (d) => d.title === title.trim(),
+  );
+
+  if (!existing) {
+    return {
+      toolCallId: ctx.toolCallId,
+      content:
+        `Error: Document "${title.trim()}" not found. Use 'write' to create a new document.`,
+      isError: true,
+    };
+  }
+
+  const result = await vaultManager.updateDocument(existing.id, {
+    title: title.trim(),
+    content: content.trim(),
+  });
+
+  return {
+    toolCallId: ctx.toolCallId,
+    content: `Rewrote vault document "${title.trim()}" (${
       result?.chunkCount ?? 0
     } chunks)`,
     isError: false,

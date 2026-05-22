@@ -66,6 +66,20 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
+ *
+ * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` and require
+ * `max_completion_tokens` instead. This check is model-name-based so it works
+ * regardless of which provider is routing the request.
+ */
+function usesMaxCompletionTokens(model: string): boolean {
+  const lower = model.toLowerCase();
+  if (/^o[134]/.test(lower)) return true;
+  if (/^gpt-5/.test(lower)) return true;
+  return false;
+}
+
+/**
  * Simple LLM client for entity-core.
  * Provides non-streaming completion for background tasks.
  */
@@ -200,7 +214,11 @@ export class LLMClient {
 
     const maxTokens = options?.maxTokens ?? this.config.maxTokens;
     if (maxTokens !== undefined) {
-      body.max_tokens = maxTokens;
+      if (usesMaxCompletionTokens(this.config.model)) {
+        body.max_completion_tokens = maxTokens;
+      } else {
+        body.max_tokens = maxTokens;
+      }
     }
 
     const maxRetries = this.config.maxRetries ?? 3;

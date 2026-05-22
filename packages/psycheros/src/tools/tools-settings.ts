@@ -124,6 +124,12 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
     description: "Image generation, captioning, and visual analysis",
     toolNames: ["generate_image", "describe_image", "look_closer"],
   },
+  {
+    id: "conversation",
+    name: "Conversation",
+    description: "Cross-conversation awareness",
+    toolNames: ["conversation_peek"],
+  },
 ];
 
 // =============================================================================

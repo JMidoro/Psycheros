@@ -7,6 +7,49 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-22
+
+### Added
+
+- **Full Windows support**: MSI installer (WiX), standalone .exe (NSIS), Task
+  Scheduler daemon supervisor, Win32 Job Object cascade-kill, system-tray
+  integration, and Ctrl+, global shortcut — at parity with the macOS launchd
+  reference. No UAC or admin required.
+- **Windows runner sidecar** (`psycheros-daemon-runner.exe`): silent
+  `CREATE_NO_WINDOW` Deno spawn wrapped in a Job Object so `schtasks /End`
+  cascades cleanly to the daemon process.
+- **Windows autologon task**: launcher boots silently to system tray at every
+  user login, mirroring the macOS launcher-agent posture.
+- **`CREATE_NO_WINDOW` on all subprocess spawns**: no ghost console windows from
+  schtasks, whoami, netstat, tasklist, git, deno, or where.exe during normal
+  operation.
+- **Per-OS tray icons**: full-color 32x32 PNG on Windows, template PNG with
+  auto-tint on macOS.
+- **`tauri-plugin-global-shortcut`** for Ctrl+,/Cmd+, preferences chord, because
+  Tauri 2 menu accelerators don't fire from WebView2-focused windows on Windows.
+- **CI split**: `launcher-v2-macos` and `launcher-v2-windows` jobs in both
+  check.yml and release.yml. Windows job builds .msi + .exe and uploads both to
+  the GitHub release page.
+- **Per-OS externalBin config** (`tauri.windows.conf.json`): avoids shipping
+  Windows-only sidecars on macOS builds.
+- **`setup.ps1`**: PowerShell equivalent of setup.sh for Windows dev setup.
+- **13 new "Traps that bite" entries** in CLAUDE.md covering Windows-specific
+  gotchas surfaced during the port.
+
+### Changed
+
+- `default-run = "psycheros-launcher"` in Cargo.toml (required by the new
+  dual-`[[bin]]` layout).
+- `splash_url` is now `Mutex<String>` with lazy capture to fix WebView2's
+  about:blank race on preferences navigation.
+- `stage_bundled_deno` renamed to `stage_bundled_binary` (back-compat alias).
+- `--allow-scripts` added to Deno warm-cache so npm postinstalls (onnxruntime,
+  sharp) complete during first-run.
+- Update-watcher toast shows per-OS shortcut hint (⌘, on macOS, Ctrl+, on
+  Windows/Linux).
+- `check_port_conflict` uses `netstat -ano` + `tasklist` on Windows.
+- `resolve_sidecar_binary` generic helper for future externalBin sidecars.
+
 ## [0.1.1] - 2025-05-20
 
 ### Fixed

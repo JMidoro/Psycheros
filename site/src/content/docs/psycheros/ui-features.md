@@ -543,6 +543,9 @@ Gen and other settings.
   format
 - Worker model (auto-titling, summarization) always has thinking disabled
   regardless of profile setting
+- The max-tokens parameter is sent as `max_completion_tokens` for models that
+  require it (OpenAI o-series, gpt-5.x) and `max_tokens` for all others — no
+  manual configuration needed
 
 **API Endpoints:**
 

@@ -22,6 +22,8 @@ export interface ButtplugSettings {
   enabled: boolean;
   /** WebSocket URL of the Buttplug server (Intiface Central) */
   websocketUrl: string;
+  /** Custom instructions injected into context only when an Intiface device is connected */
+  customInstructions: string;
 }
 
 // =============================================================================
@@ -35,6 +37,7 @@ export function getDefaultButtplugSettings(): ButtplugSettings {
   return {
     enabled: false,
     websocketUrl: "ws://127.0.0.1:12345",
+    customInstructions: "",
   };
 }
 

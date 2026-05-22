@@ -2230,20 +2230,32 @@ const LazyLoader = (() => {
     if (!messages || !sentinel) { _loading = false; return; }
 
     const cursor = sentinel.dataset.oldestCreatedAt;
+    const cursorId = sentinel.dataset.oldestId;
 
     _abortController = new AbortController();
 
     try {
       const params = new URLSearchParams({ limit: String(BATCH_SIZE) });
       if (cursor) params.set('before', cursor);
+      if (cursorId) params.set('beforeId', cursorId);
 
       const response = await fetch(`/api/conversations/${_conversationId}/messages/paginated?${params}`, {
         signal: _abortController.signal,
       });
       if (!response.ok) throw new Error('Failed to load older messages');
 
-      const { html, hasMore, oldestCreatedAt } = await response.json();
+      const { html, hasMore, oldestCreatedAt, oldestId } = await response.json();
 
+      // Empty batch but server says there are more — update cursor and let
+      // the observer re-trigger rather than killing the sentinel.
+      if ((!html || html.trim() === '') && hasMore) {
+        if (oldestCreatedAt) sentinel.dataset.oldestCreatedAt = oldestCreatedAt;
+        if (oldestId) sentinel.dataset.oldestId = oldestId;
+        _loading = false;
+        return;
+      }
+
+      // No more messages and nothing to show — remove sentinel.
       if (!html || html.trim() === '') {
         _hasMore = false;
         sentinel.remove();
@@ -2259,8 +2271,9 @@ const LazyLoader = (() => {
       const temp = document.createElement('div');
       temp.innerHTML = html;
       const nodes = Array.from(temp.childNodes);
+      const insertBefore = sentinel.nextSibling;
       for (const node of nodes) {
-        messages.insertBefore(node, sentinel);
+        messages.insertBefore(node, insertBefore);
       }
 
       // Adjust scroll so the user stays at the same content
@@ -2270,6 +2283,9 @@ const LazyLoader = (() => {
       // Update cursor for next fetch
       if (oldestCreatedAt) {
         sentinel.dataset.oldestCreatedAt = oldestCreatedAt;
+      }
+      if (oldestId) {
+        sentinel.dataset.oldestId = oldestId;
       }
 
       if (!hasMore) {

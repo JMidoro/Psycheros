@@ -60,7 +60,7 @@ managing tool enable/disable state.
 
 - Two tabs: **Built-in** (shipped with Psycheros) and **Custom** (user-written)
 - Built-in tools grouped by category (System, Identity, Data Vault, Web Search,
-  Pulse, Memory, Discord, Home Automation, Intimacy, Vision)
+  Pulse, Memory, Conversation, Discord, Home Automation, Intimacy, Vision)
 - Toggle switches for each individual tool
 - Per-category "Enable All" / "Disable All" buttons
 - Global "Enable All" / "Disable All" buttons
@@ -127,12 +127,12 @@ Settings are persisted to `.psycheros/web-search-settings.json` (gitignored).
 
 ## Data Vault Tool
 
-The entity can create, read, append, list, and search documents stored in the
-Data Vault for persistent reference.
+The entity can create, read, append, rewrite, list, and search documents stored
+in the Data Vault for persistent reference.
 
-| Tool    | Description                                                                                                                                                                                             |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vault` | Unified vault tool with `operation` discriminator: `write` (create/update), `read` (full content), `append` (add content, creates if missing), `list` (all documents), `search` (find relevant content) |
+| Tool    | Description                                                                                                                                                                                                                                                          |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vault` | Unified vault tool with `operation` discriminator: `write` (create only, errors if exists), `read` (full content), `append` (add content, creates if missing), `rewrite` (replace entire doc, destructive), `list` (all documents), `search` (find relevant content) |
 
 ### Related Source Files
 
@@ -283,6 +283,45 @@ matters. XML tags are applied at context-build time, not stored on disk.
 | `src/tools/identity-helpers.ts`  | Identity file utilities (section manipulation, auto-section-creation, MCP fallback, local snapshot restore) |
 | `src/tools/identity-maintain.ts` | `maintain_identity` — unified identity maintenance tool                                                     |
 | `src/tools/identity-custom.ts`   | Custom identity file tool (create, append, prepend, update_section, rewrite_section)                        |
+
+## Conversation Peek Tool
+
+The entity can peek into another conversation to get a summary of what's been
+discussed there. This provides cross-conversation awareness without injecting
+the full context of the other conversation into the current one.
+
+| Tool                | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| `conversation_peek` | Summarize another conversation and inject the summary into context |
+
+**Parameters:** `query` (string, partial match against conversation titles) or
+`conversation_id` (string, exact ID from a prior search).
+
+**Behavior:**
+
+1. If `query` is provided, searches all conversations by case-insensitive
+   partial match on title. Returns a numbered disambiguation list if multiple
+   matches are found.
+2. If `conversation_id` is provided, targets that conversation directly.
+3. Loads the target conversation's messages and the entity's identity system
+   message, then uses the worker LLM to produce a 2-3 paragraph first-person
+   summary. The summarizer prioritizes recent developments (which daily memories
+   may not have caught yet) while still covering the overall conversation gist.
+4. The summary is returned as the tool result, including the target
+   conversation's title and chat ID for cross-referencing with RAG memory tags.
+
+**Token budget:** Messages are truncated from oldest to fit within the worker
+model's context window. A truncation note is included when older messages are
+dropped.
+
+**Cannot peek into the current conversation** — the tool rejects calls targeting
+the conversation it's already in.
+
+### Related Source Files
+
+| File                             | Purpose                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `src/tools/conversation-peek.ts` | `conversation_peek` — search, truncate, summarize |
 
 ## Discord DM Tool
 
@@ -440,6 +479,13 @@ on/off or checks their power status by name.
 Add devices with a name, type (currently "Shelly Plug"), and IP
 address/hostname. Settings are persisted to `.psycheros/home-settings.json`
 (gitignored). The tool is auto-enabled when at least one device is enabled.
+
+**Manual safety override:** Each device row in Settings > External Connections >
+Home has On/Off buttons that bypass the entity entirely (via
+`POST /api/home-device/control`). This is an emergency shutoff — if the entity
+is glitching or stuck, the user can directly turn any device off. The override
+works regardless of the device's `enabled` state. Power state indicators
+(green/grey/red dots) are polled automatically on page load.
 
 **Device settings shape:**
 

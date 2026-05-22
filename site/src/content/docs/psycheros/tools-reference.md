@@ -128,12 +128,12 @@ Settings are persisted to `.psycheros/web-search-settings.json` (gitignored).
 
 ## Data Vault Tool
 
-The entity can create, read, append, list, and search documents stored in the
-Data Vault for persistent reference.
+The entity can create, read, append, rewrite, list, and search documents stored
+in the Data Vault for persistent reference.
 
-| Tool    | Description                                                                                                                                                                                             |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vault` | Unified vault tool with `operation` discriminator: `write` (create/update), `read` (full content), `append` (add content, creates if missing), `list` (all documents), `search` (find relevant content) |
+| Tool    | Description                                                                                                                                                                                                                                                          |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vault` | Unified vault tool with `operation` discriminator: `write` (create only, errors if exists), `read` (full content), `append` (add content, creates if missing), `rewrite` (replace entire doc, destructive), `list` (all documents), `search` (find relevant content) |
 
 ### Related Source Files
 

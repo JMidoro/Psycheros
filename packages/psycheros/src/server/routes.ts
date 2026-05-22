@@ -24,6 +24,7 @@ import type {
   HomeSettings,
   LovenseSettings,
 } from "../llm/mod.ts";
+import { dispatchDeviceControl } from "../tools/control-device.ts";
 import type {
   EntityCoreLLMSettings,
   ImageGenConfig,
@@ -40,6 +41,10 @@ import {
   maskWebSearchSettings,
 } from "../llm/mod.ts";
 import { getActiveProfile } from "../llm/settings.ts";
+import {
+  loadMemorySettings,
+  saveMemorySettings,
+} from "../memory/memory-settings.ts";
 import { join } from "@std/path";
 import { captionImageDual } from "../tools/describe-image.ts";
 import {
@@ -96,6 +101,7 @@ import {
   renderGeneralSettings,
   renderHomeSettings,
   renderImageGenSlotSettings,
+  renderInstructionsTab,
   renderLLMProfileEdit,
   renderLLMProfileHub,
   renderLorebookDetailView,
@@ -542,15 +548,17 @@ export async function handleChatFragment(
  * Handle GET /api/conversations/:id/messages/paginated - Paginated messages
  *
  * Query params:
- *   before - ISO timestamp; fetch messages older than this (exclusive)
- *   limit  - number of messages (default 50, max 100)
+ *   before   - ISO timestamp; fetch messages older than this (exclusive)
+ *   beforeId - Message ID tiebreaker for duplicate timestamps
+ *   limit    - number of messages (default 50, max 100)
  *
- * Returns JSON: { html: string, hasMore: boolean, oldestCreatedAt: string | null }
+ * Returns JSON: { html: string, hasMore: boolean, oldestCreatedAt: string | null, oldestId: string | null }
  */
 export async function handleMessagesPaginated(
   ctx: RouteContext,
   conversationId: string,
   before?: string,
+  beforeId?: string,
   limit?: number,
 ): Promise<Response> {
   const conversation = ctx.db.getConversation(conversationId);
@@ -561,6 +569,7 @@ export async function handleMessagesPaginated(
   const clampedLimit = Math.min(Math.max(limit ?? 50, 1), 100);
   const result = ctx.db.getMessagesPaginated(conversationId, {
     before,
+    beforeId,
     limit: clampedLimit,
   });
 
@@ -576,16 +585,18 @@ export async function handleMessagesPaginated(
   const displayNames = await loadGeneralSettings(ctx.dataRoot);
   const html = renderMessages(result.messages, metricsMap, displayNames);
 
-  // Get the timestamp of the oldest message in this batch for the next cursor
+  // Get the timestamp and id of the oldest message in this batch for the next cursor
   const oldestCreatedAt = result.messages.length > 0
     ? result.messages[0].createdAt.toISOString()
     : null;
+  const oldestId = result.messages.length > 0 ? result.messages[0].id : null;
 
   return new Response(
     JSON.stringify({
       html,
       hasMore: result.hasMore,
       oldestCreatedAt,
+      oldestId,
     }),
     {
       headers: { "Content-Type": "application/json" },
@@ -2955,6 +2966,70 @@ function runConsolidationInBackground(ctx: RouteContext): void {
     });
 }
 
+// =============================================================================
+// Memory Instructions Routes
+// =============================================================================
+
+/**
+ * Handle GET /fragments/settings/memories/instructions - Instructions tab.
+ * Loads and displays the custom daily memory-writing instructions.
+ */
+export async function handleInstructionsFragment(
+  ctx: RouteContext,
+): Promise<Response> {
+  try {
+    const settings = await loadMemorySettings(ctx.dataRoot);
+    const html = renderInstructionsTab(settings.dailyInstructions);
+    return new Response(html, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (error) {
+    console.error("[Routes] handleInstructionsFragment error:", error);
+    return new Response(
+      renderSaveError("Failed to load memory instructions"),
+      {
+        status: 500,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      },
+    );
+  }
+}
+
+/**
+ * Handle POST /api/memories/instructions - Save custom daily memory instructions.
+ */
+export async function handleSaveMemoryInstructions(
+  ctx: RouteContext,
+  request: Request,
+): Promise<Response> {
+  try {
+    const formData = await request.formData();
+    const dailyInstructions = formData.get("dailyInstructions");
+
+    if (typeof dailyInstructions !== "string") {
+      return new Response(renderSaveError("Missing instructions"), {
+        status: 400,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    await saveMemorySettings(ctx.dataRoot, { dailyInstructions });
+
+    return new Response(renderSaveSuccess(), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (error) {
+    console.error("[Routes] handleSaveMemoryInstructions error:", error);
+    return new Response(
+      renderSaveError("Failed to save memory instructions"),
+      {
+        status: 500,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      },
+    );
+  }
+}
+
 /**
  * Handle POST /api/mcp/sync - Manually trigger MCP sync
  *
@@ -5101,6 +5176,17 @@ export async function handleResetLLMSettings(
 }
 
 /**
+ * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
+ * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` outright.
+ */
+function usesMaxCompletionTokensParam(model: string): boolean {
+  const lower = model.toLowerCase();
+  if (/^o[134]/.test(lower)) return true;
+  if (/^gpt-5/.test(lower)) return true;
+  return false;
+}
+
+/**
  * Handle POST /api/llm-settings/test - Test an LLM connection.
  * Accepts a profile object (may not be saved yet). Preserves existing API key if masked.
  */
@@ -5173,7 +5259,9 @@ export async function handleTestLLMConnection(
       body: JSON.stringify({
         model: model || "test",
         messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 5,
+        ...usesMaxCompletionTokensParam(model || "test")
+          ? { max_completion_tokens: 5 }
+          : { max_tokens: 5 },
         stream: false,
       }),
     });
@@ -5642,6 +5730,89 @@ export async function handleSaveHomeSettings(
   }
 }
 
+/**
+ * Handle POST /api/home-device/control - Direct user control of a home device.
+ *
+ * Bypasses the entity/LLM loop entirely — this is the manual safety override.
+ * Works on any configured device regardless of enabled state.
+ */
+export async function handleControlHomeDevice(
+  ctx: RouteContext,
+  request: Request,
+): Promise<Response> {
+  try {
+    const body = await request.json() as { name?: string; action?: string };
+
+    if (
+      typeof body.name !== "string" || body.name.trim().length === 0 ||
+      typeof body.action !== "string" ||
+      !["on", "off", "status"].includes(body.action)
+    ) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "Invalid request: 'name' (string) and 'action' (on|off|status) are required",
+        }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
+    }
+
+    const settings = ctx.getHomeSettings();
+    const device = (settings.devices || []).find(
+      (d) => d.name.toLowerCase() === body.name!.trim().toLowerCase(),
+    );
+
+    if (!device) {
+      return new Response(
+        JSON.stringify({ error: `Device "${body.name}" not found` }),
+        {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
+    }
+
+    const action = body.action as "on" | "off" | "status";
+    const result = await dispatchDeviceControl(device, action);
+
+    return new Response(
+      JSON.stringify({
+        success: result.success,
+        message: result.message,
+        powerState: result.success && action !== "status"
+          ? action === "on" ? "on" : "off"
+          : undefined,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  } catch (_error) {
+    return new Response(
+      JSON.stringify({ error: "Failed to control device" }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+}
+
 // =============================================================================
 // Lovense Settings API Routes
 // =============================================================================
@@ -5693,6 +5864,9 @@ export async function handleSaveLovenseSettings(
         port: body.connection?.port ?? 34568,
         secure: body.connection?.secure ?? true,
       },
+      customInstructions: typeof body.customInstructions === "string"
+        ? body.customInstructions
+        : "",
     };
 
     await ctx.updateLovenseSettings(updated);
@@ -5991,6 +6165,9 @@ export async function handleSaveButtplugSettings(
       websocketUrl: typeof body.websocketUrl === "string"
         ? body.websocketUrl.trim()
         : "ws://127.0.0.1:12345",
+      customInstructions: typeof body.customInstructions === "string"
+        ? body.customInstructions
+        : "",
     };
 
     await ctx.updateButtplugSettings(updated);
@@ -7482,13 +7659,22 @@ export async function handleUpdateVault(
 /**
  * Handle DELETE /api/vault/:id - Delete a vault document.
  */
-export function handleDeleteVault(ctx: RouteContext, id: string): Response {
+export function handleDeleteVault(
+  ctx: RouteContext,
+  id: string,
+  request: Request,
+): Response {
   if (!ctx.vaultManager) {
     return vaultJson({ error: "Vault not available" }, 503);
   }
 
   const success = ctx.vaultManager.deleteDocument(id);
   if (!success) return vaultJson({ error: "Document not found" }, 404);
+
+  const isHtmx = request.headers.get("HX-Request") === "true";
+  if (isHtmx) {
+    return vaultHtml(renderVaultView(ctx, "Document deleted", "success"));
+  }
   return vaultJson({ success: true });
 }
 
@@ -7563,9 +7749,6 @@ function renderVaultView(
   const docCards = docs.length === 0
     ? `<div class="vault-empty">No documents in the Data Vault. Upload a file or the entity can create documents using vault.</div>`
     : docs.map((d) => {
-      const scopeBadge = d.scope === "global"
-        ? `<span class="vault-scope-badge vault-scope-badge--global">Global</span>`
-        : `<span class="vault-scope-badge vault-scope-badge--chat">Chat</span>`;
       const sourceLabel = d.source === "entity" ? "entity" : "upload";
       const sizeKB = (d.fileSize / 1024).toFixed(1);
       const date = new Date(d.updatedAt).toLocaleDateString([], {
@@ -7577,7 +7760,6 @@ function renderVaultView(
         <div class="vault-card-header">
           <span class="vault-card-title">${escapeHtml(d.title)}</span>
           <div class="vault-card-meta">
-            ${scopeBadge}
             <span class="vault-type-badge">${d.fileType.toUpperCase()}</span>
             <span class="vault-source-badge">${sourceLabel}</span>
           </div>
@@ -7639,13 +7821,6 @@ function renderVaultView(
           <div class="form-group">
             <label>Title (optional)</label>
             <input type="text" name="title" placeholder="Auto-detected from filename" />
-          </div>
-          <div class="form-group form-group--small">
-            <label>Scope</label>
-            <select name="scope">
-              <option value="global">Global</option>
-              <option value="chat">Per-Chat</option>
-            </select>
           </div>
           <div class="form-group" style="flex:0;align-items:flex-end">
             <button type="submit" class="btn btn--primary">Upload</button>
@@ -7727,7 +7902,7 @@ async function renderVaultDetailView(
       <div>
         <h1 class="settings-title">${escapeHtml(doc.title)}</h1>
         <p class="settings-desc">
-          ${doc.fileType.toUpperCase()} | ${doc.scope} | ${doc.chunkCount} chunks | ${
+          ${doc.fileType.toUpperCase()} | ${doc.chunkCount} chunks | ${
     (doc.fileSize / 1024).toFixed(1)
   } KB | ${doc.source}
         </p>

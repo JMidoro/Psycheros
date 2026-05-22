@@ -1,9 +1,18 @@
 # Rust build artifacts
 src-tauri/target/
 
-# Bundled Deno sidecars — staged by scripts/setup.sh (dev) or CI (release),
-# never committed (large + platform-specific binaries).
+# Bundled sidecar binaries — staged by scripts/setup.sh (dev) or CI
+# (release), never committed (large + platform-specific). Wildcard
+# covers both `deno-<triple>` (real sidecar) and any other staged
+# binary names a future setup script might produce.
 src-tauri/binaries/deno-*
+# Defensive: an earlier version of setup.ps1 staged the daemon-runner
+# here too. The current setup.ps1 cleans it up, but a contributor
+# running an older script (or manually placing a binary) shouldn't
+# accidentally commit it. The runner is built from
+# src/bin/psycheros-daemon-runner.rs and Tauri auto-bundles the
+# target/release/ output.
+src-tauri/binaries/psycheros-daemon-runner-*
 
 # Mobile and Windows-tile icons that `tauri icon` regenerates alongside the
 # desktop ones — not used by the desktop launcher and noisy in diffs. The

@@ -6,11 +6,37 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-22
+
+### Added
+
+- **conversation_peek tool**: entities can now peek at messages in other active
+  conversations for cross-conversation awareness, with configurable access
+  controls.
+- **Custom daily memory instructions**: new memory settings let the entity
+  define recurring daily instructions that the memory summarizer incorporates
+  during its nightly digest.
+- **Custom instructions for intimacy device connections**: per-connection
+  instruction templates for intimate hardware integrations, configurable from
+  the External Connections settings.
+- **Manual safety override for home automation devices**: a confirmation-gated
+  override for device commands flagged by the safety filter, giving the entity
+  controlled access when the user explicitly authorizes it.
+
 ### Fixed
 
-- Multi-line blockquotes (consecutive `>` lines without blank lines between
-  them) now preserve line breaks instead of collapsing into a single line. Both
-  server-side and client-side `marked` now use `breaks: true`.
+- Lazy message loading now loads all older messages correctly. The cursor
+  previously used only `created_at` with strict `<`, which could skip messages
+  sharing the same timestamp. The cursor now also carries the message `id` as a
+  tiebreaker (`beforeId` query param).
+- Vault delete returns proper HTML for HTMX requests instead of raw JSON.
+- Vault write no longer silently overwrites existing documents.
+- OpenAI o-series and gpt-5.x models now use `max_completion_tokens` instead of
+  the rejected `max_tokens` parameter, fixing connection tests and all LLM
+  requests on newer models.
+- Vault scope UI removed from settings; context book labels cleaned up.
+- Multi-line blockquotes preserve line breaks instead of collapsing into a
+  single line. Both server-side and client-side `marked` now use `breaks: true`.
 
 ## [0.3.3] - 2026-05-19
 
@@ -253,6 +279,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 - Entity identity and memory served by the sibling `entity-core` MCP server,
   spawned as a subprocess when `PSYCHEROS_MCP_ENABLED=true`.
 
+[0.4.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.0
 [0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.3.3
 [0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.3.2
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
