@@ -155,6 +155,22 @@ export class GraphStore {
   }
 
   /**
+   * Close and recreate the database connection.
+   * Used after graph.db is replaced on disk (entity_import) so
+   * the new file is picked up without discarding the GraphStore instance.
+   */
+  reopen(): void {
+    try {
+      this.db.close();
+    } catch {
+      // Already closed — safe to ignore
+    }
+    this.db = new Database(this.dbPath);
+    this.db.exec("PRAGMA foreign_keys = ON");
+    this.initialized = false;
+  }
+
+  /**
    * Run a function inside a database transaction.
    * Rolls back on error, commits on success.
    */

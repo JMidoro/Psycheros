@@ -7,6 +7,15 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-24
+
+### Fixed
+
+- Windows daemon runner now creates the log directory before opening log files,
+  preventing exit code 65 (`E_LOG_OPEN`) when a stale Task Scheduler task
+  survives an uninstall/reinstall cycle (the task is stored in the system
+  registry, not AppData, so deleting AppData doesn't remove it).
+
 ## [0.2.4] - 2026-05-24
 
 ### Fixed

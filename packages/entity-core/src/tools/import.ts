@@ -11,6 +11,7 @@ import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import type { FileStore } from "../storage/file-store.ts";
 import type { GraphStore } from "../graph/store.ts";
+import type { EmbeddingCache } from "../embeddings/cache.ts";
 import { saveIdentityMeta } from "./identity-meta.ts";
 import { createFullSnapshot } from "../snapshot/mod.ts";
 import type { SnapshotReason, SnapshotSource } from "../snapshot/types.ts";
@@ -42,6 +43,7 @@ export type EntityImportOutput = {
 export function createEntityImportHandler(
   store: FileStore,
   graphStore: GraphStore,
+  embeddingCache?: EmbeddingCache,
 ) {
   return async (
     input: { data: string; mode: string },
@@ -178,18 +180,35 @@ export function createEntityImportHandler(
             const dbBytes = await sqliteFile.async("uint8array");
             const dbPath = join(dataDir, "graph.db");
             // Write to a temp file then rename — avoids corrupting the DB
-            // for any other connection that has it open (the mod.ts scheduler).
+            // if the write fails partway through.
             const tmpPath = join(dataDir, "graph.db.tmp");
             await Deno.writeFile(tmpPath, dbBytes);
+
+            // On Windows, any open file handle blocks rename(). Close
+            // all connections to graph.db before swapping the file.
+            graphStore.close();
+            if (embeddingCache) embeddingCache.close();
+
             await Deno.rename(tmpPath, dbPath);
             graphRestored = true;
 
-            // Re-initialize graph store with the new database
-            graphStore.close();
+            // Re-open connections with the new database
+            graphStore.reopen();
             await graphStore.initialize();
+            if (embeddingCache) {
+              embeddingCache.reopen();
+              await embeddingCache.initialize();
+            }
           } catch (error) {
             console.error("[Import] Failed to replace graph.db:", error);
             graphRestored = false;
+            // Best-effort recovery: reopen with whatever is on disk
+            try {
+              graphStore.reopen();
+              await graphStore.initialize();
+            } catch {
+              // Connection is truly broken — caller must restart
+            }
           }
         }
 

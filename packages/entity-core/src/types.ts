@@ -207,12 +207,11 @@ export interface ServerConfig {
   /**
    * Optional shared GraphStore. **Load-bearing for `entity_import`:**
    * when the import handler swaps `graph.db` on disk it closes and
-   * reinitializes this store, then calls
+   * reopens this store (and the EmbeddingCache), then calls
    * `consolidationRunner.replaceDatabase(getRawDb())` so the runner
    * picks up the new handle. Sharing the same instance is what makes
-   * those two callbacks affect both surfaces at once. When not
-   * provided, `createServer` constructs its own and the runner-resync
-   * is a no-op.
+   * those callbacks affect both surfaces at once. When not provided,
+   * `createServer` constructs its own and the runner-resync is a no-op.
    */
   graphStore?: import("./graph/mod.ts").GraphStore;
   /**

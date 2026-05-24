@@ -50,9 +50,11 @@ if (import.meta.main) {
   // that need it: the MCP server (via startServer config) and the
   // local consolidation runner. Sharing a single GraphStore is what
   // makes `entity_import` work end-to-end — the import handler closes
-  // and reinitializes this same instance, then re-arms the runner via
-  // `runner.replaceDatabase(graphStore.getRawDb())`, so all sides
-  // converge on the new SQLite connection after a graph.db swap.
+  // both the GraphStore and the EmbeddingCache before renaming
+  // `graph.db`, then reopens and reinitializes both. It also re-arms
+  // the runner via `runner.replaceDatabase(graphStore.getRawDb())`,
+  // so all sides converge on the new SQLite connection after a
+  // graph.db swap.
   const store = new FileStore(dataDir);
   const graphStore = new GraphStore(dataDir);
   await store.initialize();
@@ -134,6 +136,11 @@ if (import.meta.main) {
           );
         }
       }
+
+      // Close the cache so it doesn't hold graph.db open indefinitely.
+      // If import later needs to swap graph.db, a stale handle would
+      // block the rename on Windows.
+      cache.close();
     } catch (error) {
       console.error(
         "[EmbeddingCache] Startup backfill failed:",

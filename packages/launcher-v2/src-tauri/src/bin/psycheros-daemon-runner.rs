@@ -97,7 +97,13 @@ mod windows_impl {
         // first run land cleanly even when the launcher hasn't seeded
         // the files; `append(true)` makes restart-after-restart
         // accumulation work the same way launchd's defaults do on
-        // macOS.
+        // macOS. The parent directory may not exist if the user
+        // reinstalled without cleaning up the old Task Scheduler task
+        // — create it so the runner doesn't exit E_LOG_OPEN on a
+        // stale task.
+        if let Some(parent) = std::path::Path::new(stdout_log).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let stdout_file = match OpenOptions::new()
             .create(true)
             .append(true)

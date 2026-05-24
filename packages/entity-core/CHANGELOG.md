@@ -4,6 +4,21 @@ All notable changes to entity-core are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.2.4] - 2026-05-24
+
+### Fixed
+
+- **Entity import failed to replace `graph.db` on Windows.** The import handler
+  called `Deno.rename()` while GraphStore and EmbeddingCache still had the file
+  open — Windows blocks rename when any file handle is active, causing
+  `PermissionDenied (os error 5)`. The handler now closes both connections
+  before the rename and reopens them after. `GraphStore` and `EmbeddingCache`
+  both gained a `reopen()` method for this purpose. The startup embedding-cache
+  backfill IIFE in `mod.ts` now also closes its connection when finished so it
+  doesn't hold a stale handle.
+
 ## [0.2.3] - 2026-05-23
 
 ### Added
@@ -112,6 +127,7 @@ All notable changes to entity-core are documented here. The format follows
 - Knowledge graph (people, places, relationships) backed by SQLite + sqlite-vec.
 - Snapshot system: pre-destructive-operation snapshots for recovery.
 
+[0.2.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.2.4
 [0.2.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.2.3
 [0.2.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.2.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.1.1

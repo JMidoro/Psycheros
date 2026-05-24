@@ -1252,7 +1252,11 @@ export function createServer(config: Partial<ServerConfig> = {}): McpServer {
     async ({ data, mode }) => {
       await store.initialize();
       await graphStore.initialize();
-      const handler = createEntityImportHandler(store, graphStore);
+      const handler = createEntityImportHandler(
+        store,
+        graphStore,
+        embeddingCache,
+      );
       const result = await handler({ data, mode });
 
       // After import, graphStore may have been closed and reinitialized
