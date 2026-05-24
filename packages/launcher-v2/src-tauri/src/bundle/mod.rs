@@ -200,6 +200,17 @@ pub fn stage_bundled_deno(sidecar_path: &Path, dest: &Path) -> Result<(), Bundle
 /// pinned tag, so the broad form (allow all) is appropriate — same
 /// posture as the `-A` (allow-all-perms) flag the daemon itself runs
 /// with at execution time.
+///
+/// **Known Deno 2.x limitation**: Even with `--allow-scripts`, the
+/// lifecycle scripts can fail because Deno's `nodeModulesDir:"auto"`
+/// layout (flat `.deno/<pkg>@<ver>/` dirs) doesn't place sibling
+/// packages on Node's `require()` resolution path. `sharp` can't find
+/// `semver/functions/coerce`; `onnxruntime-node` can't find its deps
+/// either. The scripts fail and `deno cache` exits 1, but all packages
+/// are fully downloaded and the daemon works fine at runtime. When the
+/// "failed to run scripts for packages" pattern appears in stderr, we
+/// treat it as a non-fatal warning instead of aborting the first-run
+/// flow.
 pub fn warm_deno_cache(
     deno_path: &Path,
     source_dir: &Path,
@@ -235,10 +246,20 @@ pub fn warm_deno_cache(
 
     let status = child.wait()?;
     if !status.success() {
-        return Err(BundleError::DenoCache {
-            status,
-            stderr_tail: tail.join("\n"),
-        });
+        let stderr_tail = tail.join("\n");
+        // Deno 2.x with nodeModulesDir:"auto" lays packages out in a flat
+        // .deno/<pkg>@<ver>/ structure that Node's require() can't always
+        // resolve from lifecycle scripts. When onnxruntime-node and sharp
+        // run their postinstall scripts, they fail to require sibling deps
+        // (e.g. semver/functions/coerce), deno exits 1, but all packages
+        // are fully installed and the daemon works fine at runtime. Detect
+        // this specific pattern and treat it as a non-fatal warning.
+        if stderr_tail.contains("failed to run scripts for packages") {
+            on_line("warning: lifecycle scripts failed (deno node_modules layout); \
+                     packages are installed, proceeding");
+            return Ok(());
+        }
+        return Err(BundleError::DenoCache { status, stderr_tail });
     }
     Ok(())
 }

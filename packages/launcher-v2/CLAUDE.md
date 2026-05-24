@@ -244,11 +244,15 @@ instead of a frozen chat window.
   Without the flag, first-run's warm-cache step can fail with
   `error: failed to run scripts for packages:
   onnxruntime-node` and a
-  `node:module` stack trace — the script DID run, but Deno still reports the
-  package's lifecycle as un-finalized. `bundle::warm_deno_cache` passes the
-  broad form (`--allow-scripts`, not `--allow-scripts=npm:onnxruntime-node`)
-  because we trust the pinned Psycheros source we just cloned and the daemon
-  itself runs with `-A` anyway.
+  `node:module` stack trace. `bundle::warm_deno_cache` passes the broad form
+  (`--allow-scripts`, not `--allow-scripts=npm:onnxruntime-node`) because we
+  trust the pinned Psycheros source we just cloned and the daemon itself runs
+  with `-A` anyway. Even with the flag, the scripts still fail on cold installs
+  because Deno's `nodeModulesDir:"auto"` flat `.deno/` layout breaks Node's
+  `require()` resolution from within lifecycle scripts (e.g. `sharp` can't find
+  `semver/functions/coerce`). The packages are fully downloaded and the daemon
+  works fine — `warm_deno_cache` detects this specific "failed to run scripts
+  for packages" error and treats it as a non-fatal warning instead of aborting.
 - **Every `Command::new` on Windows needs `CREATE_NO_WINDOW`.** Release builds
   have `windows_subsystem = "windows"` (no console), so any console-subsystem
   subprocess (`schtasks`, `whoami`, `netstat`, `tasklist`, `git`, `deno`,

@@ -7,6 +7,15 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-24
+
+### Fixed
+
+- First-run no longer aborts when `deno cache` exits 1 due to Deno 2.x
+  lifecycle-script failures (`onnxruntime-node`, `sharp` can't resolve sibling
+  deps in the flat `.deno/` layout). The packages are fully installed and the
+  daemon works fine — the error is now treated as a non-fatal warning.
+
 ## [0.2.3] - 2026-05-24
 
 ### Fixed
