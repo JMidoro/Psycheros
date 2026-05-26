@@ -6,6 +6,8 @@ All notable changes to entity-core are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-26
+
 ### Fixed
 
 - **Significant memory update preserves slug.** `memory_update` now accepts an
@@ -17,9 +19,9 @@ All notable changes to entity-core are documented here. The format follows
   consumers can uniquely identify each memory file.
 - **Orphan bare-date files auto-removed on list.** `listMemories` now
   automatically removes bare-date files (`YYYY-MM-DD.md`) found in the
-  significant directory, instead of just logging a warning. These orphans
-  from the slug propagation bug would show up in the UI as ghost entries
-  that couldn't be deleted.
+  significant directory, instead of just logging a warning. These orphans from
+  the slug propagation bug would show up in the UI as ghost entries that
+  couldn't be deleted.
 - **Significant memory delete cleans up orphan files.** `deleteMemory` now
   removes any bare-date orphan (`{date}.md`) alongside the target
   `{date}_{slug}.md` for significant memories. Previously the orphan would

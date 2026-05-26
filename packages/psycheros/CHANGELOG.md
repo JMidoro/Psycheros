@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-26
+
 ### Added
 
 - "Upload File" button in Core Prompts UI for all categories (Self, User,

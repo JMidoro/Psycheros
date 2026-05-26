@@ -640,15 +640,15 @@ settings (passed through from the Psycheros environment).
 
 ### Entity Data Export & Import
 
-Settings → System Admin → Entity Data tab. Full backup and restore of all
-entity data across both entity-core and Psycheros.
+Settings → System Admin → Entity Data tab. Full backup and restore of all entity
+data across both entity-core and Psycheros.
 
 **Export** produces a zip containing:
 
 - `entity-core/` — identity files, memories (daily/weekly/monthly/yearly/
   significant), knowledge graph (SQLite + JSON export)
-- `psycheros/` — conversations + messages, lorebooks, vault documents,
-  generated images, anchor image metadata
+- `psycheros/` — conversations + messages, lorebooks, vault documents, generated
+  images, anchor image metadata
 - `manifest.json` — schema version, timestamp, per-part status, item counts
 
 If entity-core data is unavailable (MCP disconnected, entity-core crashed, or

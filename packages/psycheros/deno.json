@@ -1,6 +1,6 @@
 {
   "name": "@psycheros/daemon",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "exports": "./src/main.ts",
   "imports": {
     "marked": "npm:marked@^15",
@@ -19,12 +19,20 @@
     "stop": "pkill -INT -f 'deno.*main.ts' || true"
   },
   "lint": {
-    "exclude": ["web/lib/", "web/js/"],
+    "exclude": [
+      "web/lib/",
+      "web/js/"
+    ],
     "rules": {
-      "exclude": ["require-await"]
+      "exclude": [
+        "require-await"
+      ]
     }
   },
   "fmt": {
-    "exclude": ["web/lib/", "web/js/"]
+    "exclude": [
+      "web/lib/",
+      "web/js/"
+    ]
   }
 }
