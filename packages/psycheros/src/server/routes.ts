@@ -178,6 +178,7 @@ import { getServerStartTime } from "./diagnostics.ts";
 import entityCoreDenoJson from "../../../entity-core/deno.json" with {
   type: "json",
 };
+import type { PluginManager } from "../plugins/mod.ts";
 
 /**
  * Context passed to route handlers containing dependencies.
@@ -297,6 +298,8 @@ export interface RouteContext {
   /** Voice chat settings */
   getVoiceSettings: () => VoiceSettings;
   updateVoiceSettings: (settings: VoiceSettings) => Promise<void>;
+  /** Trusted local plugin harness */
+  pluginManager: PluginManager;
 }
 
 /**
@@ -415,8 +418,8 @@ function normalizePath(path: string): string {
  * @param _ctx - Route context (unused, kept for consistency)
  * @returns HTTP Response with the app shell HTML
  */
-export function handleIndex(_ctx: RouteContext): Response {
-  const html = renderAppShell();
+export function handleIndex(ctx: RouteContext): Response {
+  const html = renderAppShell(ctx.pluginManager.getBrowserHeadHtml());
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -519,7 +522,7 @@ export function handleConversationView(
 
   // Always return the full app shell
   // Frontend JS will load the conversation content via /fragments/chat/:id
-  const html = renderAppShell();
+  const html = renderAppShell(ctx.pluginManager.getBrowserHeadHtml());
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -1348,6 +1351,7 @@ export async function handleChat(
             deviceStatusCache: ctx.getDeviceStatusCache(),
             contextLength: activeProfile?.contextLength,
             maxTokens: activeProfile?.maxTokens,
+            pluginManager: ctx.pluginManager,
           },
         );
 
@@ -1557,6 +1561,7 @@ export async function handleChatRetry(
             deviceStatusCache: ctx.getDeviceStatusCache(),
             contextLength: retryProfile?.contextLength,
             maxTokens: retryProfile?.maxTokens,
+            pluginManager: ctx.pluginManager,
           },
         );
 

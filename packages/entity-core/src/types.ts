@@ -215,12 +215,19 @@ export interface ServerConfig {
    */
   graphStore?: import("./graph/mod.ts").GraphStore;
   /**
+   * Optional shared EmbeddingCache. Pass one when plugin services and MCP
+   * memory tools should use the same sqlite-vec connection during startup.
+   */
+  embeddingCache?: import("./embeddings/mod.ts").EmbeddingCache;
+  /**
    * Optional consolidation runner reference. When provided alongside
    * `graphStore`, the `entity_import` handler updates the runner's DB
    * handle after `graph.db` is replaced on disk so the runner doesn't
    * keep using a stale (closed) connection.
    */
   consolidationRunner?: import("./consolidation/runner.ts").ConsolidationRunner;
+  /** Trusted local plugins prepared before the MCP transport connects */
+  pluginManager?: import("./plugins/mod.ts").EntityCorePluginManager;
   /** Minimum score threshold for RAG retrieval */
   ragMinScore?: number;
   /** Maximum chunks to retrieve */

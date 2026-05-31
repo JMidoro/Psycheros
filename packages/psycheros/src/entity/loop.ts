@@ -59,6 +59,7 @@ import { acquireLock } from "../utils/conversation-lock.ts";
 import { createCollector, finalize, setFinishReason } from "../metrics/mod.ts";
 import { getWearableDataCache } from "../wearable/cache.ts";
 import { formatWearableData } from "./sa-formatters.ts";
+import type { PluginManager } from "../plugins/mod.ts";
 
 /**
  * Escape special XML characters in a string.
@@ -304,6 +305,8 @@ export interface EntityConfig {
   contextLength?: number;
   /** Maximum tokens reserved for the response (from active LLM profile) */
   maxTokens?: number;
+  /** Trusted local plugins that can contribute prompt-time context */
+  pluginManager?: PluginManager;
 }
 
 /**
@@ -864,6 +867,22 @@ Discord interaction:
       discordChannelContent = parts.join("\n");
     }
 
+    const pluginContent = await this.config.pluginManager?.buildPromptContent({
+      conversationId,
+      sourceType: options?.sourceType ?? (options?.pulseId ? "pulse" : "web"),
+      userMessage,
+      sections: {
+        memories: memoriesContent,
+        chatHistory: chatHistoryContent,
+        lorebook: lorebookContent,
+        graph: graphContent,
+        vault: vaultContent,
+        situationalAwareness: saContent,
+        discord: discordChannelContent,
+      },
+      mcpClient: this.config.mcpClient,
+    });
+
     const systemMessage = buildSystemMessage(
       baseInstructions,
       selfContent,
@@ -878,6 +897,7 @@ Discord interaction:
       imageGenContent,
       saContent,
       discordChannelContent,
+      pluginContent,
     ) + (options?.systemPromptSuffix ?? "");
 
     // Get conversation history from DB
@@ -988,6 +1008,7 @@ Discord interaction:
         graphContent,
         vaultContent,
         situationalAwarenessContent: saContent,
+        pluginContent,
         messages: messages.slice(1).map((msg) => ({
           role: msg.role,
           content: msg.content,
