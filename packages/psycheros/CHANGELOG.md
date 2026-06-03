@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-02
+
+### Fixed
+
+- sqlite-vec extension now tracked per-connection instead of globally,
+  preventing crashes when the extension loads late or fails.
+- vec0 virtual table creation guarded on extension availability — graceful
+  fallback instead of fatal error.
+- Conversation import tagging no longer fails on a SQL quoting bug.
+- Knowledge graph RAG context capped to 50 nodes to prevent token overflow.
+
+### Changed
+
+- Upgraded Deno runtime to 2.8.0 (fixes V8 CodeRange OOM on macOS Tahoe).
+
 ## [0.5.0] - 2026-06-01
 
 ### Added

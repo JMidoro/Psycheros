@@ -837,7 +837,12 @@ async function vectorSearch(
     ...keywordPromoted.slice(0, keywordSlots),
   ];
   for (const item of outputItems) {
-    const excerpt = findBestExcerpt(item.content, query, item.chunkIndex);
+    const excerpt = findBestExcerpt(
+      item.content,
+      query,
+      item.chunkIndex,
+      item.granularity,
+    );
 
     results.push({
       granularity: item.granularity,
@@ -871,8 +876,14 @@ function findBestExcerpt(
   content: string,
   query: string,
   chunkIndex = 0,
+  granularity?: string,
 ): string {
   const MAX_EXCERPT = 2000;
+
+  // Significant memories always get full content (capped at 10k as a safety net)
+  if (granularity === "significant") {
+    return content.length <= 10000 ? content : content.slice(0, 10000);
+  }
 
   // Short memories: return in full (most daily/weekly memories are under 2KB)
   if (content.length <= MAX_EXCERPT) {
@@ -928,8 +939,13 @@ function findBestExcerpt(
 
   for (let i = start; i < end; i++) {
     const part = bullets[i].trim();
-    if (excerptParts.join("").length + part.length <= MAX_EXCERPT) {
+    const remaining = MAX_EXCERPT - excerptParts.join("").length;
+    if (remaining <= 0) break;
+    if (part.length <= remaining) {
       excerptParts.push(part);
+    } else {
+      excerptParts.push(part.slice(0, remaining));
+      break;
     }
   }
 
@@ -981,7 +997,12 @@ async function textSearch(
       }
 
       if (score >= minScore) {
-        const excerpt = findBestExcerpt(memory.content, query);
+        const excerpt = findBestExcerpt(
+          memory.content,
+          query,
+          0,
+          memory.granularity,
+        );
 
         const ageDays = Math.max(
           0,

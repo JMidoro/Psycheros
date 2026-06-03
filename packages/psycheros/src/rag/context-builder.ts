@@ -288,14 +288,23 @@ export async function buildGraphContext(
       }
     }
 
-    // Format the context
-    const nodesArray = Array.from(nodesById.values());
-    const context = formatGraphContext(nodesArray, allEdges);
+    // Format the context (cap total nodes to 25)
+    let nodesArray = Array.from(nodesById.values());
+    const MAX_TOTAL_NODES = 50;
+    if (nodesArray.length > MAX_TOTAL_NODES) {
+      nodesArray.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      nodesArray = nodesArray.slice(0, MAX_TOTAL_NODES);
+    }
+    const keptIds = new Set(nodesArray.map((n) => n.id));
+    const filteredEdges = allEdges.filter(
+      (e) => keptIds.has(e.fromId) && keptIds.has(e.toId),
+    );
+    const context = formatGraphContext(nodesArray, filteredEdges);
 
     return {
       context,
       nodeCount: nodesArray.length,
-      edgeCount: allEdges.length,
+      edgeCount: filteredEdges.length,
     };
   } catch (error) {
     console.error("[RAG] Failed to build graph context:", error);

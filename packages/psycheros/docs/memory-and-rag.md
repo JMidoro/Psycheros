@@ -283,6 +283,10 @@ memory.
 4. **Context Injection**: Relevant nodes and relationships are formatted in
    compact one-line-per-relationship format and added to the system prompt
 
+Total graph nodes are capped at 50 — after traversal and dedup, nodes are ranked
+by query-relevance score and the top 25 are kept (edges between dropped nodes
+are pruned).
+
 **Context format example:**
 
 ```

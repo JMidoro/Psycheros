@@ -9,8 +9,10 @@ import type { Database } from "@db/sqlite";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { ensureDir, exists } from "@std/fs";
 
-// Track extension loading state
-let extensionLoaded = false;
+// Track which connections have the extension loaded.
+// SQLite extensions are per-connection — loading into one handle
+// doesn't register the virtual table module in another.
+const loadedConnections = new WeakSet<Database>();
 
 /**
  * Get the expected extension filename for the current platform.
@@ -192,8 +194,9 @@ function getExtensionPath(): string | null {
  *
  * @returns true if the extension is loaded
  */
-export function isVectorModuleAvailable(): boolean {
-  return extensionLoaded;
+export function isVectorModuleAvailable(db?: Database): boolean {
+  if (db) return loadedConnections.has(db);
+  return false;
 }
 
 /**
@@ -202,10 +205,9 @@ export function isVectorModuleAvailable(): boolean {
  *
  * @returns Promise that resolves to true if extension loaded successfully
  */
-export function ensureVectorModule(): boolean {
-  // Extension loading is now done in loadVectorExtension
-  // This function exists for backwards compatibility
-  return extensionLoaded;
+export function ensureVectorModule(db?: Database): boolean {
+  if (db) return loadVectorExtension(db);
+  return false;
 }
 
 /**
@@ -216,9 +218,7 @@ export function ensureVectorModule(): boolean {
  * @returns true if extension loaded successfully, false otherwise
  */
 export function loadVectorExtension(db: Database): boolean {
-  if (extensionLoaded) {
-    return true;
-  }
+  if (loadedConnections.has(db)) return true;
 
   try {
     db.enableLoadExtension = true;
@@ -234,7 +234,7 @@ export function loadVectorExtension(db: Database): boolean {
     for (const extPath of candidates) {
       try {
         db.exec(`SELECT load_extension('${extPath}')`);
-        extensionLoaded = true;
+        loadedConnections.add(db);
         db.enableLoadExtension = false;
         return true;
       } catch {

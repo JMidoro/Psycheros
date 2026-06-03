@@ -159,9 +159,11 @@ entity-core automatically rebuilds all embeddings on startup.
    vector. Long memories are chunked during this process.
 5. Each candidate memory is scored using the multi-signal formula above
 6. Results are sorted by final score and filtered by `minScore`
-7. Excerpts are returned: short memories (<2000 chars) in full; longer memories
-   use the matched chunk's content directly, or fall back to keyword-matching on
-   bullet sections
+7. Excerpts are returned: significant memories are always returned in full
+   (capped at 10k chars as a safety net); other granularities use the matched
+   chunk's content directly, or fall back to extracting the title line plus the
+   most query-relevant bullet section (capped at 2000 chars, with oversized
+   segments truncated to fit rather than dropped)
 
 ### Fallback
 

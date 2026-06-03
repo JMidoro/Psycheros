@@ -6,6 +6,15 @@ All notable changes to entity-core are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-02
+
+### Fixed
+
+- Long prose memories no longer silently lose their body text during
+  consolidation excerpting.
+- Significant memories now return full content in RAG retrieval instead of
+  truncated excerpts (capped at 10k chars as a safety net).
+
 ## [0.3.3] - 2026-06-01
 
 ### Fixed

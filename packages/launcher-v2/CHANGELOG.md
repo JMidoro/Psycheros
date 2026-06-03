@@ -5,6 +5,12 @@ format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/). It is pre-1.0 until
 cross-platform supervisors ship.
 
+## [0.2.8] - 2026-06-02
+
+### Changed
+
+- Install scripts updated for Deno 2.8.0.
+
 ## [Unreleased]
 
 ## [0.2.7] - 2026-05-28

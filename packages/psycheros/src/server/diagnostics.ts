@@ -178,7 +178,7 @@ export async function collectDiagnostics(
   }
 
   // Vector system
-  const vecAvailable = isVectorModuleAvailable();
+  const vecAvailable = isVectorModuleAvailable(db);
   const vecVersion = getVecVersion(db);
   const memoryChunks = safeCount(
     db,

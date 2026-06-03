@@ -1402,8 +1402,8 @@ export async function handleAdminDataMigrationGraph(
           const graphDb = new Database(graphDbPath);
 
           // Load sqlite-vec extension for vec_graph_nodes virtual table access.
-          // Must load per-connection — the extensionLoaded cache in vector.ts
-          // only covers Psycheros's own DB connection.
+          // Must load per-connection — SQLite extensions are scoped to the
+          // connection that loads them, not global.
           let vectorAvailable = false;
           try {
             graphDb.enableLoadExtension = true;

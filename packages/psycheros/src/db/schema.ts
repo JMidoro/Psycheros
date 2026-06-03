@@ -1105,14 +1105,23 @@ function migrateLegacyJobRuns(db: Database): void {
  */
 function initializeVectorTables(db: Database): void {
   try {
-    // Load the sqlite-vec extension
-    loadVectorExtension(db);
-
-    // Check if extension loaded successfully
-    const version = getVecVersion(db);
-    if (version) {
-      console.log(`[DB] sqlite-vec extension loaded (version ${version})`);
+    // Load the sqlite-vec extension — bail out if unavailable
+    const loaded = loadVectorExtension(db);
+    if (!loaded) {
+      console.warn(
+        "[DB] sqlite-vec extension not available. Vector search will fall back to in-memory calculation.",
+      );
+      return;
     }
+
+    const version = getVecVersion(db);
+    if (!version) {
+      console.warn(
+        "[DB] sqlite-vec extension not available (vec_version check failed). Vector search will fall back to in-memory calculation.",
+      );
+      return;
+    }
+    console.log(`[DB] sqlite-vec extension loaded (version ${version})`);
 
     // Create vec_memory_chunks virtual table for memory RAG
     const hasMemoryVecTable = db
@@ -1163,12 +1172,18 @@ function initializeVectorTables(db: Database): void {
     }
 
     // Verify and repair vector table sync
+    console.log("[DB] verifyVectorTableSync starting");
     verifyVectorTableSync(db);
+    console.log("[DB] verifyVectorTableSync completed");
   } catch (error) {
     // Log warning but don't fail - vector search is optional
     console.warn(
       "[DB] Failed to initialize sqlite-vec extension. Vector search will fall back to in-memory calculation.",
       error instanceof Error ? error.message : String(error),
+    );
+    console.warn(
+      "[DB] Error stack:",
+      error instanceof Error ? error.stack : "no stack",
     );
   }
 }
@@ -1178,6 +1193,25 @@ function initializeVectorTables(db: Database): void {
  * If out of sync, clear the tracking tables to force a full reindex.
  */
 function verifyVectorTableSync(db: Database): void {
+  // Guard: verify the vec0 virtual table module is actually functional,
+  // not just that the scalar functions are available. vec_version() can
+  // return a value even when the vec0 module isn't registered for
+  // virtual table operations. Test by querying an existing vec0 table.
+  try {
+    db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_memory_chunks'",
+    )
+      .get();
+    // Table exists in schema — try to actually read it
+    db.prepare("SELECT COUNT(*) as count FROM vec_memory_chunks")
+      .get<{ count: number }>();
+  } catch {
+    console.warn(
+      "[DB] sqlite-vec vec0 module not functional, skipping vector table sync verification",
+    );
+    return;
+  }
+
   // Check memory_chunks vs vec_memory_chunks
   const memoryChunksCount = db
     .prepare("SELECT COUNT(*) as count FROM memory_chunks")
@@ -1192,6 +1226,14 @@ function verifyVectorTableSync(db: Database): void {
     console.warn(
       "[DB] vec_memory_chunks is corrupted, dropping and recreating",
     );
+    if (!loadVectorExtension(db)) return;
+    // Verify extension is actually loaded before recreating
+    if (!getVecVersion(db)) {
+      console.warn(
+        "[DB] Extension not available for vec_memory_chunks recovery, skipping",
+      );
+      return;
+    }
     try {
       db.exec("DROP TABLE IF EXISTS vec_memory_chunks");
     } catch { /* ignore */ }
@@ -1243,6 +1285,14 @@ function verifyVectorTableSync(db: Database): void {
     console.warn(
       "[DB] vec_messages is corrupted, dropping and recreating",
     );
+    if (!loadVectorExtension(db)) return;
+    // Verify extension is actually loaded before recreating
+    if (!getVecVersion(db)) {
+      console.warn(
+        "[DB] Extension not available for vec_messages recovery, skipping",
+      );
+      return;
+    }
     try {
       db.exec("DROP TABLE IF EXISTS vec_messages");
     } catch { /* ignore */ }
@@ -1295,6 +1345,14 @@ function verifyVectorTableSync(db: Database): void {
     console.warn(
       "[DB] vec_vault_chunks is corrupted, dropping and recreating",
     );
+    if (!loadVectorExtension(db)) return;
+    // Verify extension is actually loaded before recreating
+    if (!getVecVersion(db)) {
+      console.warn(
+        "[DB] Extension not available for vec_vault_chunks recovery, skipping",
+      );
+      return;
+    }
     try {
       db.exec("DROP TABLE IF EXISTS vec_vault_chunks");
     } catch { /* ignore */ }
@@ -1345,7 +1403,7 @@ function verifyVectorTableSync(db: Database): void {
   if (!hasImportTag) {
     const tagged = db
       .prepare(
-        "UPDATE conversations SET source_type = 'import' WHERE (source_type IS NULL OR source_type = 'web') AND title LIKE '[%']",
+        "UPDATE conversations SET source_type = 'import' WHERE (source_type IS NULL OR source_type = 'web') AND title LIKE '[[]%'",
       )
       .run();
     if (tagged > 0) {
