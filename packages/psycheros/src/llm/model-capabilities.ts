@@ -327,6 +327,10 @@ export function filterSamplingParams(
 
   for (const [param, value] of entries) {
     if (value === undefined) continue;
+    if (
+      (param === "topK" || param === "frequencyPenalty" ||
+        param === "presencePenalty") && value === 0
+    ) continue;
     if (supported.has(param)) {
       (params as Record<string, number>)[param] = value;
     } else {

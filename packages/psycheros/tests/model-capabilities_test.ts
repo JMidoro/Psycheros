@@ -206,7 +206,7 @@ Deno.test("filterSamplingParams: o3-mini strips temperature, topP, penalties", (
   assertEquals(params.frequencyPenalty, undefined);
   assertEquals(params.presencePenalty, undefined);
   assertEquals(params.maxTokens, 4096);
-  assertEquals(stripped.length, 5); // temperature, topP, topK, freqPenalty, presPenalty
+  assertEquals(stripped.length, 2); // temperature, topP (zero-value topK/freqPenalty/presPenalty silently skipped)
 });
 
 Deno.test("filterSamplingParams: GPT-4o keeps all except topK", () => {
@@ -243,7 +243,7 @@ Deno.test("filterSamplingParams: GLM strips penalties and topK", () => {
   assertEquals(params.topK, undefined);
   assertEquals(params.frequencyPenalty, undefined);
   assertEquals(params.presencePenalty, undefined);
-  assertEquals(stripped.length, 3); // topK, freqPenalty, presPenalty
+  assertEquals(stripped.length, 1); // topK=20 (zero-value freqPenalty/presPenalty silently skipped)
 });
 
 Deno.test("filterSamplingParams: Claude strips penalties but keeps topK", () => {

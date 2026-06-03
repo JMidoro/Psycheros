@@ -81,6 +81,9 @@ pub struct DaemonConfig {
     /// Optional override for entity-core's data directory.
     /// When None, defaults to `<data_dir>/entity-core/data`.
     pub entity_core_data_dir: Option<PathBuf>,
+    /// macOS Tahoe workaround: injects `DENO_V8_FLAGS=--jitless` into the
+    /// service definition's environment block when true.
+    pub tahoe_compat: bool,
 }
 
 /// Best-effort runtime info about the OS-supervised daemon, parsed out of

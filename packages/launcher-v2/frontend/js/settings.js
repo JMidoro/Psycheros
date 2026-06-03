@@ -24,7 +24,7 @@ const els = {
   editInPsycheros: () => document.getElementById("settings-edit-in-psycheros"),
 };
 
-function renderSettings(settings, diag, channel) {
+function renderSettings(settings, diag, channel, tahoeCompat) {
   const body = els.body();
   if (!body) return;
 
@@ -116,6 +116,28 @@ function renderSettings(settings, diag, channel) {
               await loadSettings();
             },
           },
+        },
+      ],
+    },
+    {
+      heading: "Compatibility",
+      rows: [
+        {
+          label: "Tahoe VM nonsense workaround",
+          value: tahoeCompat ? "Enabled — JITless mode" : "Disabled",
+          plainValue: true,
+          action: installed
+            ? {
+              label: tahoeCompat ? "Disable" : "Enable",
+              async onClick() {
+                const { err } = await safeInvoke("set_tahoe_compat", {
+                  enabled: !tahoeCompat,
+                });
+                if (err) console.warn("[launcher] set_tahoe_compat:", err);
+                await loadSettings();
+              },
+            }
+            : undefined,
         },
       ],
     },
@@ -228,14 +250,15 @@ async function loadSettings() {
   if (!body) return;
   renderLoading(body, "Loading settings…");
 
-  // Three reads — psycheros's general-settings.json (entity / user /
+  // Four reads — psycheros's general-settings.json (entity / user /
   // timezone), the launcher's diagnostics snapshot (port + daemon
-  // mode + state), and the persisted update channel. All local IPC;
-  // parallelize since they're independent.
-  const [settingsRes, diagRes, channelRes] = await Promise.all([
+  // mode + state), the persisted update channel, and the Tahoe
+  // compat flag. All local IPC; parallelize since they're independent.
+  const [settingsRes, diagRes, channelRes, tahoeRes] = await Promise.all([
     safeInvoke("read_general_settings"),
     safeInvoke("get_diagnostics"),
     safeInvoke("get_update_channel"),
+    safeInvoke("get_tahoe_compat"),
   ]);
 
   if (settingsRes.err) {
@@ -250,7 +273,15 @@ async function loadSettings() {
   if (channelRes.err) {
     console.warn("[launcher] get_update_channel failed:", channelRes.err);
   }
-  renderSettings(settingsRes.ok, diagRes.ok, channelRes.ok ?? "stable");
+  if (tahoeRes.err) {
+    console.warn("[launcher] get_tahoe_compat failed:", tahoeRes.err);
+  }
+  renderSettings(
+    settingsRes.ok,
+    diagRes.ok,
+    channelRes.ok ?? "stable",
+    tahoeRes.ok ?? false,
+  );
   syncEditInPsycherosState(diagRes.ok);
 }
 

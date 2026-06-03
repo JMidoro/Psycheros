@@ -7,6 +7,17 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-06-03
+
+### Added
+
+- **Tahoe VM nonsense workaround toggle** in Settings > Compatibility. When
+  enabled, injects `DENO_V8_FLAGS=--jitless` into the launchd plist's
+  environment block and restarts the daemon, bypassing a macOS Tahoe 26.3.x
+  virtual memory regression that crashes V8's JIT CodeRange reservation.
+  Persists across restarts. ~20-40% slower JS execution; negligible for an
+  I/O-bound chat daemon.
+
 ## [0.2.9] - 2026-06-03
 
 ### Fixed

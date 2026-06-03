@@ -268,9 +268,8 @@ fn build_daemon_config() -> Result<DaemonConfig, String> {
     std::fs::create_dir_all(paths::data_dir()).map_err(|e| format!("create data dir: {e}"))?;
     std::fs::create_dir_all(paths::log_dir()).map_err(|e| format!("create log dir: {e}"))?;
 
-    let port = config::load()
-        .map(|c| c.port)
-        .unwrap_or(daemon::DAEMON_PORT);
+    let cfg = config::load().unwrap_or_default();
+    let port = cfg.port;
 
     Ok(DaemonConfig {
         label: "ai.psycheros.daemon".to_string(),
@@ -281,6 +280,7 @@ fn build_daemon_config() -> Result<DaemonConfig, String> {
         port,
         entity_core_dir: None,
         entity_core_data_dir: Some(paths::entity_core_data_dir()),
+        tahoe_compat: cfg.tahoe_compat,
     })
 }
 
@@ -1303,6 +1303,37 @@ pub fn get_update_channel() -> String {
         config::UpdateChannel::Stable => "stable".to_string(),
         config::UpdateChannel::Beta => "beta".to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tahoe VM nonsense workaround
+// ---------------------------------------------------------------------------
+
+/// Whether the macOS Tahoe JITless workaround is enabled. Returned as a
+/// bool for the settings UI toggle state.
+#[tauri::command]
+pub fn get_tahoe_compat() -> bool {
+    config::load().map(|cfg| cfg.tahoe_compat).unwrap_or(false)
+}
+
+/// Toggle the macOS Tahoe JITless workaround. Persists the choice,
+/// rewrites the plist (so `DENO_V8_FLAGS=--jitless` appears or
+/// disappears from the env block), and restarts the daemon if it's
+/// currently running so the change takes effect immediately.
+#[tauri::command]
+pub fn set_tahoe_compat(enabled: bool) -> Result<(), String> {
+    // 1. Persist the new value.
+    let mut cfg = config::load().unwrap_or_default();
+    cfg.tahoe_compat = enabled;
+    config::save(&cfg).map_err(|e| format!("save config: {e}"))?;
+
+    // 2. Rewrite the plist + restart (no-ops when not installed / not loaded).
+    let daemon_cfg = build_daemon_config()?;
+    let mode = cfg.effective_mode();
+    let sup = default_supervisor();
+    let _ = sup.set_mode_only(&daemon_cfg, mode);
+    let _ = sup.restart();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

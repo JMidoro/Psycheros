@@ -126,6 +126,11 @@ pub struct LauncherConfig {
     /// Older configs without this field deserialize to an empty vec.
     #[serde(default)]
     pub update_history: Vec<UpdateHistoryEntry>,
+    /// macOS Tahoe workaround: when true, `DENO_V8_FLAGS=--jitless` is
+    /// injected into the launchd plist's EnvironmentVariables to bypass
+    /// V8's CodeRange reservation crash on Tahoe's broken VM subsystem.
+    #[serde(default)]
+    pub tahoe_compat: bool,
 }
 
 impl Default for LauncherConfig {
@@ -136,6 +141,7 @@ impl Default for LauncherConfig {
             bundled_source_version: None,
             update_channel: None,
             update_history: Vec::new(),
+            tahoe_compat: false,
         }
     }
 }
@@ -278,5 +284,18 @@ mod tests {
             Some("psycheros-v0.3.3")
         );
         // The legacy fields silently disappeared, as intended.
+    }
+
+    #[test]
+    fn tahoe_compat_defaults_to_false() {
+        let cfg = LauncherConfig::default();
+        assert!(!cfg.tahoe_compat);
+    }
+
+    #[test]
+    fn tahoe_compat_roundtrips() {
+        let json = r#"{"port":3000,"tahoe_compat":true}"#;
+        let cfg: LauncherConfig = serde_json::from_str(json).expect("parse");
+        assert!(cfg.tahoe_compat);
     }
 }

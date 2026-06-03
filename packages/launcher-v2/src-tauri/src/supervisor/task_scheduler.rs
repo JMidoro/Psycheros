@@ -746,6 +746,7 @@ mod tests {
             entity_core_data_dir: Some(PathBuf::from(
                 "C:\\Users\\me\\AppData\\Roaming\\Psycheros\\data\\entity-core",
             )),
+            tahoe_compat: false,
         }
     }
 

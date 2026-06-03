@@ -40,7 +40,10 @@ parameter filtering.
 **Model capabilities** (`src/llm/model-capabilities.ts`) — an ordered array of
 model-family rules that detects which sampling parameters a model supports from
 its name string. First match wins. `filterSamplingParams()` strips unsupported
-parameters before the API call and logs what was removed. Unknown models get a
+parameters before the API call and logs what was removed. Zero-value no-op
+params (`topK=0`, `frequencyPenalty=0`, `presencePenalty=0`) are silently
+skipped rather than stripped — they're defaults, not intentional user choices.
+Non-zero values on unsupported models still warn. Unknown models get a
 permissive default (send everything). The rules cover OpenAI o-series/GPT,
 Claude, DeepSeek, Gemini, Qwen, GLM, Llama, Mistral, Kimi, and Gemma — including
 OpenRouter-prefixed names like `anthropic/claude-sonnet-4-20250514`.

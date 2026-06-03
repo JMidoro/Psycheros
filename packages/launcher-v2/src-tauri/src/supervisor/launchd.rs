@@ -135,6 +135,9 @@ impl LaunchdSupervisor {
             "PSYCHEROS_MCP_COMMAND".into(),
             cfg.deno_path.display().to_string(),
         ));
+        if cfg.tahoe_compat {
+            env_pairs.push(("DENO_V8_FLAGS".into(), "--jitless".into()));
+        }
 
         let env_block = env_pairs
             .iter()
@@ -527,6 +530,7 @@ mod tests {
             entity_core_data_dir: Some(PathBuf::from(
                 "/Users/me/Library/Application Support/Psycheros/data/entity-core",
             )),
+            tahoe_compat: false,
         }
     }
 
@@ -695,6 +699,30 @@ mod tests {
         assert!(
             !xml.contains("/Users/A&B/deno"),
             "raw ampersand leaked into the plist — would fail launchd parse"
+        );
+    }
+
+    // ─── tahoe_compat env var ──────────────────────────────────────
+
+    #[test]
+    fn tahoe_compat_false_excludes_deno_v8_flags() {
+        let sup = LaunchdSupervisor::new();
+        let xml = sup.render_plist(&fixture_cfg(), PlistMode::Autostart);
+        assert!(
+            !xml.contains("DENO_V8_FLAGS"),
+            "DENO_V8_FLAGS should not appear when tahoe_compat is false"
+        );
+    }
+
+    #[test]
+    fn tahoe_compat_true_includes_deno_v8_flags() {
+        let sup = LaunchdSupervisor::new();
+        let mut cfg = fixture_cfg();
+        cfg.tahoe_compat = true;
+        let xml = sup.render_plist(&cfg, PlistMode::Autostart);
+        assert!(
+            xml.contains("<key>DENO_V8_FLAGS</key>\n        <string>--jitless</string>"),
+            "DENO_V8_FLAGS=--jitless should appear when tahoe_compat is true"
         );
     }
 

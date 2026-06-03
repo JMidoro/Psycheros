@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-06-03
+
+### Fixed
+
+- Sampling-parameter filter now silently skips zero-value defaults (`topK=0`,
+  `frequencyPenalty=0`, `presencePenalty=0`) instead of logging spurious
+  "stripped" warnings. Non-zero unsupported values still warn as before.
+
 ## [0.5.2] - 2026-06-03
 
 ### Added

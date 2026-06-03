@@ -298,6 +298,8 @@ pub fn run() {
             commands::get_update_history,
             commands::list_available_tags,
             commands::rollback_to_snapshot,
+            commands::get_tahoe_compat,
+            commands::set_tahoe_compat,
         ])
         .on_window_event(|window, event| {
             // Closing the manager window doesn't unconditionally quit
