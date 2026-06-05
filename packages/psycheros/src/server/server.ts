@@ -129,6 +129,7 @@ import {
   handleDeleteSignificantMemory,
   handleDeleteVault,
   handleDeviceBridge,
+  handleDeviceCommand,
   handleEmbedMemories,
   // handleEntityCoreConsolidationRun, // removed — consolidation runs automatically on startup
   handleEntityCoreEmbeddingPurge,
@@ -1710,6 +1711,11 @@ export class Server {
     // GET /api/device-bridge - WebSocket endpoint for BLE device bridge
     if (method === "GET" && path === "/api/device-bridge") {
       return handleDeviceBridge(ctx, request);
+    }
+
+    // POST /api/device/command - Send command to BLE device via bridge
+    if (method === "POST" && path === "/api/device/command") {
+      return handleDeviceCommand(ctx, request);
     }
 
     // GET /api/ble-settings - BLE device bridge settings

@@ -269,6 +269,23 @@ the devices, and sends responses and inbound data back. Messages:
 - Client → Server: `{ type: "device_data", deviceId, dataType, data }`
 - Server → Client: `{ type: "command", requestId, deviceId, command, params? }`
 
+**Device command endpoint:**
+
+| Method | Path                  | Description                                         |
+| ------ | --------------------- | --------------------------------------------------- |
+| `POST` | `/api/device/command` | Send a command to a connected BLE device via bridge |
+
+Generic endpoint for custom tools and external callers (Android apps, scripts)
+to send commands to BLE devices. Looks up the device by ID, routes through the
+DeviceBridge, and returns the response. Request body:
+
+```json
+{ "device_id": "banglejs-1", "command": "B:200,100,200", "params": {} }
+```
+
+Response: `{ success: boolean, data?: unknown, error?: string }`. Returns 503 if
+the device is not connected, 400 for invalid input, 502 for bridge errors.
+
 **Manual override (`POST /api/home-device/control`):** Bypasses the entity/LLM
 loop entirely. Request body:
 `{ name: string, action: "on" | "off" | "status" }`. Works on any configured

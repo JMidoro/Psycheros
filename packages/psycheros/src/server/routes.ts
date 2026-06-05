@@ -1877,6 +1877,91 @@ export function handleDeviceBridge(
   return response;
 }
 
+/**
+ * Handle POST /api/device/command — Send a command to a BLE device.
+ *
+ * Generic endpoint for custom tools and external callers (Android apps,
+ * scripts) to send commands to BLE devices through the DeviceBridge.
+ * Looks up the device by ID, routes the command to the correct gateway
+ * client, and returns the device's response.
+ *
+ * Request body:
+ *   { device_id: string, command: string, params?: object }
+ *
+ * Response:
+ *   { success: boolean, data?: unknown, error?: string }
+ */
+export async function handleDeviceCommand(
+  _ctx: RouteContext,
+  request: Request,
+): Promise<Response> {
+  const bridge = getDeviceBridge();
+
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return new Response(
+      JSON.stringify({ success: false, error: "Invalid JSON body" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const deviceId = body.device_id as string;
+  const command = body.command as string;
+  const params = body.params as Record<string, unknown> | undefined;
+
+  if (!deviceId || typeof deviceId !== "string") {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Missing or invalid 'device_id'",
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (!command || typeof command !== "string") {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Missing or invalid 'command'",
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // Check if the device is connected
+  if (!bridge.isDeviceConnected(deviceId)) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error:
+          `Device "${deviceId}" is not connected through any bridge client`,
+      }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // Send command and await response
+  try {
+    const result = await bridge.sendCommand(deviceId, command, params);
+    return new Response(
+      JSON.stringify(result),
+      {
+        status: result.success ? 200 : 502,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Response(
+      JSON.stringify({ success: false, error: message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
 // =============================================================================
 // BLE Settings Routes
 // =============================================================================

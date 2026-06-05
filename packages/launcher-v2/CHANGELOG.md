@@ -7,6 +7,16 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-06-04
+
+### Fixed
+
+- **Tahoe codesign repair now recurses into plug cache subdirectories.** The
+  Deno plug cache nests `.dylib` files under `plug/https/github.com/<hash>/`,
+  not at the top level of `plug/`. The non-recursive walk missed every actual
+  plugin, so the ad-hoc re-signing never touched the real dylib. Switched to a
+  stack-based recursive walk that finds plugins regardless of nesting depth.
+
 ## [0.2.15] - 2026-06-03
 
 ### Fixed

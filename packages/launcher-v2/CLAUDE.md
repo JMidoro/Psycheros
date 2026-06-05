@@ -285,12 +285,14 @@ instead of a frozen chat window.
   IDs`.
   The launcher self-heals on every daemon start by ad-hoc re-signing both the
   staged Deno binary and all cached `.dylib` files
-  (`bundle::repair_plug_cache_signatures`). `codesign -f -s -` strips the
-  original Team ID and replaces it with an ad-hoc signature (cdhash only, no
-  Team ID) so both sides match. Running on every start (not just first-run)
-  ensures existing installations pick up the fix when they update the launcher
-  binary — first-run doesn't re-execute for existing installs. Safe on all macOS
-  versions — pre-Tahoe systems never enforced this check.
+  (`bundle::repair_plug_cache_signatures`) via a recursive walk — Deno nests
+  plugins under `plug/https/github.com/<hash>.dylib`, not at the top level.
+  `codesign -f -s -` strips the original Team ID and replaces it with an ad-hoc
+  signature (cdhash only, no Team ID) so both sides match. Running on every
+  start (not just first-run) ensures existing installations pick up the fix when
+  they update the launcher binary — first-run doesn't re-execute for existing
+  installs. Safe on all macOS versions — pre-Tahoe systems never enforced this
+  check.
 
 ## Cross-platform considerations
 

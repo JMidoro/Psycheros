@@ -316,15 +316,20 @@ pub fn repair_plug_cache_signatures() {
             return;
         };
 
-        let entries = match std::fs::read_dir(&plug_dir) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "dylib") {
-                adhoc_resign(&path);
+        // Walk recursively — Deno's plug cache nests dylibs under
+        // plug/https/github.com/<hash>.dylib, not at the top level.
+        let mut stack = vec![plug_dir];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "dylib") {
+                    adhoc_resign(&path);
+                }
             }
         }
     }

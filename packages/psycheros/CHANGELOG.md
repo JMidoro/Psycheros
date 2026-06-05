@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-06-04
+
+### Added
+
+- `POST /api/device/command` endpoint for sending commands to connected BLE
+  devices through the Device Bridge. Generic endpoint for external callers
+  (Android apps, scripts, custom tools) to route commands by device ID. Returns
+  `{ success, data?, error? }` with appropriate HTTP status codes (503 if device
+  disconnected, 400 for invalid input, 502 for bridge errors).
+
 ## [0.5.3] - 2026-06-03
 
 ### Fixed
@@ -560,6 +570,10 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.5.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.4
+[0.5.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.3
+[0.5.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.2
+[0.5.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.1
 [0.5.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.0
 [0.4.12]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.12
 [0.4.11]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.11
