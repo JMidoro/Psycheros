@@ -72,8 +72,7 @@ pub fn enable_media_capture(window: &tauri::WebviewWindow) {
         if responds.as_bool() {
             let _: () = msg_send![
                 &config,
-                sel!(_setRequiresUserActionForMediaCapture:),
-                Bool::new(false),
+                _setRequiresUserActionForMediaCapture: Bool::new(false),
             ];
         }
 
