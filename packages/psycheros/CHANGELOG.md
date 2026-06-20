@@ -4,6 +4,18 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.8.7] - 2026-06-20
+
+### Fixed
+
+- **Deepgram STT no longer censors profanity.** Deepgram's `profanity_filter`
+  defaults to `true` when `smart_format` is on, silently rewriting the user's
+  actual words as asterisks in the transcript the LLM sees. Now hardcoded to
+  `false` in `transcribeDeepgram()` (`src/voice/stt.ts`). Not exposed as a
+  setting — the filter is off unconditionally.
+
 ## [0.8.6] - 2026-06-20
 
 ### Added
@@ -19,8 +31,6 @@ follows [Semantic Versioning](https://semver.org/).
 - Audio settings layout on short viewports: Enable Voice Chat toggle, Hold to
   Talk control, and Debug section moved into scrolling content so they stay
   reachable.
-
-## [Unreleased]
 
 ## [0.8.5] - 2026-06-19
 
@@ -854,6 +864,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.8.7]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.7
 [0.8.6]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.6
 [0.8.5]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.5
 [0.8.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.4

@@ -2763,12 +2763,13 @@ dependencies = [
 
 [[package]]
 name = "psycheros-launcher"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "block2",
  "dirs 5.0.1",
  "objc2",
  "objc2-foundation",
+ "objc2-web-kit",
  "semver",
  "serde",
  "serde_json",

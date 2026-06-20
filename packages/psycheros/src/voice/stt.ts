@@ -96,6 +96,9 @@ async function transcribeDeepgram(
   const params = new URLSearchParams({
     model: settings.model || "nova-3",
     smart_format: "true",
+    // Deepgram defaults profanity_filter=true when smart_format is on, which
+    // silently rewrites the user's actual words as asterisks. Off, always.
+    profanity_filter: "false",
   });
   if (settings.language) params.set("language", settings.language);
   if (boostWords.length) params.set("keywords", boostWords.join(","));

@@ -7,6 +7,21 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-06-20
+
+### Fixed
+
+- **macOS desktop app now exposes `navigator.mediaDevices` for voice chat.**
+  WKWebView does not expose the mediaDevices API surface at all unless the host
+  app flips several private WebKit flags — voice chat failed inside the desktop
+  app because the API was missing, not just unpermitted. New `macos_media.rs`
+  module flips three private WebKit flags on the WKWebView at startup
+  (`_allowedMediaCapture`, `_setRequiresUserActionForMediaCapture`,
+  `mediaCaptureEnabled`). Private-API use is safe for Psycheros's ad-hoc signed
+  distribution (no Mac App Store goal). Also adds the missing
+  `allow-request-mic-permission` Tauri capability that blocked the mic
+  permission command. No-op on Windows/Linux.
+
 ## [0.2.18] - 2026-06-19
 
 ### Fixed

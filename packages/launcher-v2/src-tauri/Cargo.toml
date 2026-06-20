@@ -1,6 +1,6 @@
 [package]
 name = "psycheros-launcher"
-version = "0.2.18"
+version = "0.2.19"
 edition = "2021"
 description = "Psycheros desktop launcher — Tauri app + OS-supervised daemon"
 license = "MIT"
@@ -107,6 +107,7 @@ windows-sys = { version = "0.60", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = "0.3"
+objc2-web-kit = "0.3"
 block2 = "0.6"
 
 [features]

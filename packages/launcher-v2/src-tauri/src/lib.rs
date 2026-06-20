@@ -21,6 +21,7 @@ pub mod commands;
 pub mod config;
 pub mod daemon;
 pub mod http;
+pub mod macos_media;
 pub mod paths;
 pub mod proc;
 pub mod supervisor;
@@ -326,6 +327,12 @@ pub fn run() {
             let splash_url = window.url().map_err(|e| e.to_string())?.to_string();
 
             app.manage(AppState::new(splash_url));
+
+            // macOS-only: flip WKWebView's private media-capture flags so
+            // `navigator.mediaDevices` exists inside the desktop webview.
+            // Bug context + private-API rationale in `macos_media.rs`.
+            // No-op on Windows/Linux.
+            crate::macos_media::enable_media_capture(&window);
 
             // Install native menu (macOS menu bar / Linux+Windows in-window).
             let menu = app::menu::build_menu(app)?;
