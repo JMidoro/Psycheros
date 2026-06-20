@@ -15,7 +15,8 @@
 //! (`signingIdentity: "-"` in `tauri.conf.json`) with no MAS distribution
 //! goal, so the same restriction does not apply. See
 //! `packages/launcher-v2/CLAUDE.md` "Traps that bite" → "WKWebView's
-//! getUserMedia..." for the full bug + workaround rationale.
+//! getUserMedia..." for the full bug + workaround rationale, and
+//! `encapsulated-growing-dewdrop.md` for the implementation plan.
 //!
 //! ## Three layers
 //!
@@ -41,13 +42,17 @@ pub fn enable_media_capture(window: &tauri::WebviewWindow) {
     use objc2::{class, msg_send, sel};
     use objc2_foundation::{ns_string, NSNumber, NSObjectNSKeyValueCoding};
     use objc2_web_kit::{WKPreferences, WKWebView, WKWebViewConfiguration};
-    use wry::WebViewExtMacOS;
 
-    // with_webview on macOS hands us a PlatformWebview (= wry::WebView).
-    // WebViewExtMacOS::webview() returns Retained<WKWebView> directly —
-    // no manual retain needed.
+    // with_webview on macOS hands us a PlatformWebview. Its .inner() method
+    // returns *mut c_void — the raw WKWebView pointer. Retain it for objc2's
+    // Rc tracking, use it one-shot, let it autorelease.
     let _ = window.with_webview(|webview| unsafe {
-        let wk: Retained<WKWebView> = webview.webview();
+        let wv = webview.inner();
+        let wk: Option<Retained<WKWebView>> = Retained::retain(wv as *mut WKWebView);
+        let wk = match wk {
+            Some(wk) => wk,
+            None => return,
+        };
         let config: Retained<WKWebViewConfiguration> = wk.configuration();
 
         // Layer 1: expose the navigator.mediaDevices surface. Without this
