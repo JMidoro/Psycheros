@@ -1,0 +1,5 @@
+"$schema" = "https://schema.tauri.app/config/2"
+
+[default]
+description = "Default permission set for the Psycheros mic-capture plugin. Allows JS to start and stop native audio capture — required for voice chat inside the Tauri desktop app on macOS Tahoe where WKWebView doesn't expose navigator.mediaDevices."
+permissions = ["allow-start-capture", "allow-stop-capture"]

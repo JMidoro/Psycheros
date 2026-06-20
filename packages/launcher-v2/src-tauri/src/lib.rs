@@ -21,8 +21,6 @@ pub mod commands;
 pub mod config;
 pub mod daemon;
 pub mod http;
-pub mod macos_media;
-pub mod mic_plugin;
 pub mod paths;
 pub mod proc;
 pub mod supervisor;
@@ -238,11 +236,12 @@ pub fn run() {
         // The handler is gated on window focus so we don't react when
         // the user is in a different app.
         .plugin(register_preferences_shortcut_plugin())
-        // Mic permission plugin. Lives outside the main `commands.rs`
-        // surface because Tauri 2's ACL only resolves plugin-namespaced
-        // commands for remote origins (http://localhost:3000 from the
-        // daemon-loaded voice UI). See `mic_plugin.rs`.
-        .plugin(crate::mic_plugin::init());
+        // Native macOS mic capture plugin. Bypasses WKWebView's broken
+        // navigator.mediaDevices on Tahoe (26) by pulling PCM frames
+        // straight off AVAudioEngine and shipping them to JS via a
+        // Tauri IPC channel. Lives in its own crate so Tauri's build
+        // generates proper plugin-namespaced ACL permissions.
+        .plugin(tauri_plugin_psycheros_mic_capture::init());
 
     // WebDriver server for E2E testing — opt-in via the `webdriver`
     // cargo feature, off in release builds. When enabled, exposes a
@@ -332,12 +331,6 @@ pub fn run() {
             let splash_url = window.url().map_err(|e| e.to_string())?.to_string();
 
             app.manage(AppState::new(splash_url));
-
-            // macOS-only: flip WKWebView's private media-capture flags so
-            // `navigator.mediaDevices` exists inside the desktop webview.
-            // Bug context + private-API rationale in `macos_media.rs`.
-            // No-op on Windows/Linux.
-            crate::macos_media::enable_media_capture(&window);
 
             // Install native menu (macOS menu bar / Linux+Windows in-window).
             let menu = app::menu::build_menu(app)?;

@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-06-20
+
+### Changed
+
+- Voice chat on macOS desktop (Tauri/WKWebView) now captures audio via the
+  launcher's native mic-capture plugin instead of the broken
+  `navigator.mediaDevices` path. WKWebView on macOS Tahoe (26) does not expose
+  the mediaDevices API surface at all, so the previous permission-shim
+  workaround had no effect. Audio frames are now streamed as Int16 PCM over a
+  Tauri IPC channel directly to the voice WebSocket. Browser mode and non-macOS
+  desktops are unchanged.
+
 ## [0.8.8] - 2026-06-20
 
 ### Fixed
@@ -879,6 +891,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.8.9]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.9
 [0.8.8]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.8
 [0.8.7]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.7
 [0.8.6]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.6

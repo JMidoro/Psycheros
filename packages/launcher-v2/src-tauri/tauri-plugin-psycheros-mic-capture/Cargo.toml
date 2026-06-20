@@ -1,0 +1,25 @@
+[package]
+name = "tauri-plugin-psycheros-mic-capture"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-psycheros-mic-capture"
+description = "Native macOS mic capture for Psycheros — bypasses WKWebView getUserMedia limitations on Tahoe"
+license = "MIT"
+publish = false
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = "1"
+thiserror = "1"
+
+# macOS-only: AVAudioEngine + AVFoundation bindings for native mic capture.
+# Other platforms use the non_macos.rs stub and never touch these crates.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-av-foundation = "0.3"
+block2 = "0.6"

@@ -6001,21 +6001,45 @@ async function runVoiceChatTest() {
   const tauriKeys = Object.keys(window).filter((k) => k.toLowerCase().includes('tauri'));
   appendVoiceDebug('env', `window keys containing 'tauri': ${tauriKeys.join(', ') || 'none'}`);
 
-  // --- Mic permission path (Tauri desktop only) ---
-  const hasInvoke = !!window.__TAURI__?.core?.invoke;
-  appendVoiceDebug('mic-perm', `window.__TAURI__.core.invoke available: ${hasInvoke}`);
+  // --- Native mic-capture plugin probe (Tauri desktop only) ---
+  // The plugin streams Int16 PCM frames via a Tauri IPC Channel. We
+  // start it, count frames for 2 seconds, then stop. Expected ~100
+  // frames at 50Hz (20ms each at 16kHz mono Int16).
+  const tauriInvoke = window.__TAURI__?.core?.invoke;
+  const TauriChannel = window.__TAURI__?.ipc?.Channel;
+  appendVoiceDebug('mic-perm', `window.__TAURI__.core.invoke available: ${!!tauriInvoke}`);
+  appendVoiceDebug('mic-perm', `window.__TAURI__.ipc.Channel available: ${!!TauriChannel}`);
 
-  if (hasInvoke) {
-    appendVoiceDebug('mic-perm', "Calling invoke('plugin:mic|request_mic_permission')...");
+  if (tauriInvoke && TauriChannel) {
+    const channel = new TauriChannel('audio-frame-test');
+    let frameCount = 0;
+    let firstFrameBytes = 0;
+    channel.onmessage = (message) => {
+      frameCount++;
+      if (frameCount === 1) {
+        firstFrameBytes = Array.isArray(message) ? message.length : 0;
+      }
+    };
+    appendVoiceDebug('mic-perm', "Calling invoke('plugin:mic-capture|start_capture')...");
     try {
-      const granted = await window.__TAURI__.core.invoke('plugin:mic|request_mic_permission');
-      appendVoiceDebug('mic-perm', `invoke returned: ${JSON.stringify(granted)}`);
+      await tauriInvoke('plugin:mic-capture|start_capture', { onFrame: channel });
+      appendVoiceDebug('mic-perm', 'start_capture returned OK — listening for 2 seconds');
+      await new Promise((r) => setTimeout(r, 2000));
+      await tauriInvoke('plugin:mic-capture|stop_capture');
+      appendVoiceDebug(
+        'mic-perm',
+        `native capture OK — ${frameCount} frames in 2s (first frame: ${firstFrameBytes} bytes)`,
+      );
     } catch (err) {
       const detail = err && err.message ? err.message : String(err);
-      appendVoiceDebug('mic-perm', `invoke FAILED: ${detail}`);
+      appendVoiceDebug('mic-perm', `native capture FAILED: ${detail}`);
+      // Best-effort stop in case start succeeded but something else failed
+      try {
+        await tauriInvoke('plugin:mic-capture|stop_capture');
+      } catch {}
     }
   } else {
-    appendVoiceDebug('mic-perm', 'Skipping Tauri invoke — not in desktop app context');
+    appendVoiceDebug('mic-perm', 'Skipping native capture probe — not in desktop app context or no Channel API');
   }
 
   // --- getUserMedia probe ---

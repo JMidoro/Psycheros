@@ -149,48 +149,51 @@ async function openVoiceChat(conversationId) {
   // mode we skip getUserMedia entirely and the waveform stays empty.
   // Status text + STT event toasts carry the visual feedback instead.
   if (earlySttProvider !== 'browser') {
-    // Tauri macOS bug workaround. WKWebView's media-capture delegate
-    // isn't wired up in wry, so getUserMedia silently fails with no
-    // system prompt — Psycheros never appears in System Settings →
-    // Microphone. The launcher's request_mic_permission command
-    // pre-requests via AVCaptureDevice's public API, writing the same
-    // TCC entry the prompt would. Once that entry exists, WKWebView's
-    // internal TCC check passes without needing its (broken) delegate
-    // path. No-op on Windows/Linux; falls through cleanly when running
-    // standalone in a browser.
-    if (window.__TAURI__?.core?.invoke) {
-      // Diagnostic logs routed to the Voice chat debug panel in Audio
-      // settings (globalThis.appendVoiceDebug) when voiceChatDebug is on.
+    // Tauri macOS path: WKWebView on Tahoe (26) doesn't expose
+    // navigator.mediaDevices at all — getUserMedia is unreachable. The
+    // launcher ships a native mic-capture plugin that bypasses WebRTC
+    // entirely and streams Int16 PCM 16kHz mono frames to JS via a
+    // Tauri IPC Channel. We forward each frame to the voice WebSocket
+    // with voiceWs.send() — same binary protocol the existing
+    // onAudioProcess path uses.
+    //
+    // Browser mode (no __TAURI__) keeps the original getUserMedia path.
+    const tauriInvoke = window.__TAURI__?.core?.invoke;
+    const TauriChannel = window.__TAURI__?.ipc?.Channel;
+    if (tauriInvoke && TauriChannel) {
       if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
-        globalThis.appendVoiceDebug('mic-perm', 'Voice chat start — Tauri detected, calling request_mic_permission');
+        globalThis.appendVoiceDebug('mic-perm', 'Tauri detected — using native mic-capture plugin');
       }
+      const channel = new TauriChannel('audio-frame');
+      channel.onmessage = (message) => {
+        if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
+        // message is an array of bytes (Vec<u8> from Rust). Wrap as
+        // Uint8Array buffer for binary WS send.
+        voiceWs.send(new Uint8Array(message).buffer);
+      };
       try {
-        const granted = await window.__TAURI__.core.invoke('plugin:mic|request_mic_permission');
+        await tauriInvoke('plugin:mic-capture|start_capture', { onFrame: channel });
+        nativeCaptureActive = true;
         if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
-          globalThis.appendVoiceDebug('mic-perm', `invoke returned: ${JSON.stringify(granted)}`);
-        }
-        if (granted === false) {
-          showToast('Microphone permission denied.', 'warning');
-          cleanup();
-          return;
+          globalThis.appendVoiceDebug('mic-perm', 'native capture started');
         }
       } catch (err) {
-        // Older launcher without the command, capability not granted,
-        // or invoke unavailable — surface via debug panel if enabled,
-        // always log to console.
+        const detail = err && err.message ? err.message : String(err);
+        showToast(`Mic capture failed: ${detail}`, 'warning');
         if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
-          const detail = err && err.message ? err.message : String(err);
-          globalThis.appendVoiceDebug('mic-perm', `invoke FAILED: ${detail}`);
+          globalThis.appendVoiceDebug('mic-perm', `start_capture FAILED: ${detail}`);
         }
-        console.warn('[voice] Tauri mic permission request failed:', err);
+        cleanup();
+        return;
       }
-    } else if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
-      globalThis.appendVoiceDebug(
-        'mic-perm',
-        `Voice chat start — no __TAURI__ (window keys with 'tauri': ${Object.keys(window).filter((k) => k.toLowerCase().includes('tauri')).join(',') || 'none'})`,
-      );
-    }
-
+      // Skip getUserMedia entirely — we have the audio stream via native.
+    } else {
+      if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
+        globalThis.appendVoiceDebug(
+          'mic-perm',
+          `No Tauri native capture (${tauriInvoke ? 'invoke present, ' : 'no invoke, '}${TauriChannel ? 'Channel present' : 'no Channel'}) — falling through to getUserMedia`,
+        );
+      }
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -224,6 +227,7 @@ async function openVoiceChat(conversationId) {
       }
       cleanup();
       return;
+    }
     }
   }
 
@@ -472,6 +476,16 @@ function cleanup() {
 
   const transcriptEl = document.getElementById('voice-transcript');
   if (transcriptEl) transcriptEl.innerHTML = '';
+
+  // Stop the Tauri native mic-capture plugin if it was running. Fire
+  // and forget — we don't need to wait, and the next call will refuse
+  // to start if a previous one is somehow still active.
+  if (nativeCaptureActive && window.__TAURI__?.core?.invoke) {
+    nativeCaptureActive = false;
+    window.__TAURI__.core.invoke('plugin:mic-capture|stop_capture').catch((err) => {
+      console.warn('[voice] stop_capture failed:', err);
+    });
+  }
 
   // Reset toast element references — the overlay (and everything inside
   // it) gets removed below, so these references would be stale.
@@ -1208,6 +1222,11 @@ let pendingBytes = null;
 // out everything else during long responses. Reset in cleanup().
 let sawFirstTtsFrame = false;
 let ttsFrameCount = 0;
+
+// True while the Tauri native mic-capture plugin is running. Set by the
+// Tauri-detection branch in openVoiceChat, cleared by cleanup() calling
+// stop_capture. Browser mode never sets this.
+let nativeCaptureActive = false;
 
 function queueAudioFrame(frame) {
   if (isDeafened) return;

@@ -1,6 +1,6 @@
 [package]
 name = "psycheros-launcher"
-version = "0.2.20"
+version = "0.2.21"
 edition = "2021"
 description = "Psycheros desktop launcher — Tauri app + OS-supervised daemon"
 license = "MIT"
@@ -58,6 +58,13 @@ tauri-plugin-dialog = "2"
 # matching the menu-accelerator semantic on macOS.
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
+# Native macOS mic capture plugin. Lives in its own crate so Tauri's
+# build process generates proper plugin-namespaced ACL permissions
+# (`mic-capture:allow-start-capture` etc.) that work from the remote
+# localhost:3000 origin the launcher loads the daemon UI from. macOS
+# Tahoe's WKWebView doesn't expose navigator.mediaDevices at all, so
+# we bypass WebRTC entirely and stream PCM frames to JS via Tauri IPC.
+tauri-plugin-psycheros-mic-capture = { path = "tauri-plugin-psycheros-mic-capture" }
 serde_json = "1"
 # Cross-platform path resolution (data_dir, cache_dir, etc.) so the launcher
 # uses the right per-OS conventions without bespoke #[cfg] in every file.
@@ -95,15 +102,11 @@ windows-sys = { version = "0.60", features = [
     "Win32_System_Threading",
 ] }
 
-# macOS-only: objc2 + block2 for the request_mic_permission command.
-# WKWebView's media-capture delegate isn't wired up in wry, so
-# getUserMedia silently fails with no system prompt. We work around it
-# by pre-requesting mic permission via AVCaptureDevice's public API,
-# which writes the same TCC entry the system prompt would. block2 is
-# required because the API is callback-based and Rust needs to construct
-# an Objective-C block to receive the result. objc2-foundation gives us
-# NSString for the AVMediaTypeAudio constant ("soun"). Kept under
-# target-cfg so Windows/Linux builds don't pay the dep weight.
+# macOS-only objc2 deps. Historically used by request_mic_permission
+# in commands.rs; that command moved to the native mic-capture plugin
+# crate (`tauri-plugin-psycheros-mic-capture/`) which has its own deps.
+# Kept here for now in case any future macOS-specific code in this crate
+# needs them — harmless if unused.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = "0.3"

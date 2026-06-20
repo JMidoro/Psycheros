@@ -7,6 +7,21 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-06-20
+
+### Changed
+
+- Replaced the permission-only `mic` plugin with a dedicated
+  `tauri-plugin-psycheros-mic-capture` crate that captures audio natively via
+  `AVAudioEngine` and streams Int16 PCM 16kHz mono frames to JS over a Tauri IPC
+  channel. macOS Tahoe (26)'s WKWebView does not expose `navigator.mediaDevices`
+  at all — the previous permission-shim approach (flip private WebKit flags,
+  then getUserMedia) was dead on arrival because the API surface itself is
+  missing. The new plugin sidesteps WebRTC entirely. No-op on Windows/Linux
+  (stub returns an error; voice.js falls back to getUserMedia).
+- Removed `macos_media.rs` and `mic_plugin.rs` — their private-API flag-flipping
+  and permission-request logic are superseded by the native capture plugin.
+
 ## [0.2.20] - 2026-06-20
 
 ### Fixed
