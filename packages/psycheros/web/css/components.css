@@ -219,6 +219,12 @@
   align-self: flex-end;
 }
 
+.msg--user.msg--editing {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
 .msg--assistant {
   align-self: stretch;
   width: 100%;
@@ -2046,7 +2052,7 @@
    Message Edit
    ========================================================================== */
 
-/* Edit button - hidden until hover */
+/* Edit button - always visible */
 .msg-edit-btn {
   display: flex;
   align-items: center;
@@ -2059,13 +2065,9 @@
   border-radius: 4px;
   color: var(--c-fg-muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: 1;
   transition: all var(--transition);
   margin-left: var(--sp-2);
-}
-
-.msg:hover .msg-edit-btn {
-  opacity: 1;
 }
 
 .msg-edit-btn:hover {

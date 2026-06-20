@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "psycheros-daemon",
+  "description": "Allows the psycheros daemon origin (loaded when the webview navigates to http://localhost:<port>) to invoke Tauri commands. Scoped to macOS because the driving use case is the macOS-only mic permission workaround for voice chat — Windows and Linux don't need this and we don't widen their attack surface without a reason. macOS-only also keeps the security surface tight on the platforms where the bug exists.",
+  "windows": ["main"],
+  "platforms": ["macOS"],
+  "remote": {
+    "urls": [
+      "http://localhost",
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:default"
+  ]
+}

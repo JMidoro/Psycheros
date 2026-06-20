@@ -242,8 +242,11 @@ Both user and assistant messages can be edited after they're sent.
 
 **Features:**
 
-- Edit button (pencil icon) appears on hover
-- Inline editing with textarea replacing message content
+- Edit button (pencil icon) is always visible (not hover-gated, so it's
+  discoverable on mobile and desktop)
+- Inline editing with textarea replacing message content. User-message bubbles
+  stretch to full content width during editing so the textarea matches the
+  entity-side editing experience
 - Save/Cancel buttons for confirming or discarding changes
 - Edited messages shown with (edited) indicator in the UI
 - `edited_at` timestamp stored in database (not passed to entity)
@@ -1140,10 +1143,10 @@ content — each in its own collapsible section within the message. Context
 divider messages render with a scissors icon, accent-colored "Context cleared"
 label with timestamp, and gradient horizontal line separator.
 
-**Message editing:** Both user and entity messages are editable (hover reveals
-edit button). Edits affect the local DB copy only, not the original Discord
-message. For entity messages, only the text content is editable — thinking and
-tool call sections are preserved. Uses the same
+**Message editing:** Both user and entity messages are editable (edit button is
+always visible, not hover-gated). Edits affect the local DB copy only, not the
+original Discord message. For entity messages, only the text content is editable
+— thinking and tool call sections are preserved. Uses the same
 `startMessageEdit`/`saveMessageEdit` JS functions as regular conversations.
 Conversation ID is resolved from the message element's `data-conversation-id`
 attribute (Discord views are loaded via HTMX fragment swap, so the URL path is

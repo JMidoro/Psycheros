@@ -7,6 +7,19 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-06-19
+
+### Fixed
+
+- **macOS desktop app now grants microphone access for Tauri WebView voice
+  chat.** WKWebView's media-capture delegate isn't wired in wry, so
+  `getUserMedia()` silently failed inside the Tauri desktop app on macOS — the
+  app never appeared in System Settings → Microphone. New
+  `request_mic_permission` command pre-grants at the TCC level via
+  `AVCaptureDevice.requestAccess`; psycheros invokes it before `getUserMedia`
+  when `window.__TAURI__` is present. No-op on Windows/Linux; falls through
+  cleanly in browser mode and older launchers.
+
 ## [0.2.17] - 2026-06-18
 
 ### Fixed

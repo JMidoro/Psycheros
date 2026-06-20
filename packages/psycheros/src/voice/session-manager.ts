@@ -375,16 +375,25 @@ export class VoiceSessionManager {
         // audio during the hold should be transcribed. For browser STT
         // mode this is a no-op (the browser starts/stops recognition
         // itself on PTT events).
+        console.log(
+          `[Voice:debug] ptt_start — buffer cleared (was ${session.pipeline.audioBufferLength()} bytes)`,
+        );
         session.pipeline.clearAudioBuffer();
         break;
 
       case "ptt_end":
         // PTT released — process accumulated audio.
+        console.log(
+          `[Voice:debug] ptt_end — processing ${session.pipeline.audioBufferLength()} bytes of audio`,
+        );
         void session.pipeline.processAudioTurn();
         break;
 
       case "user_silence":
         // Browser-side VAD detected end of speech — process accumulated audio.
+        console.log(
+          `[Voice:debug] user_silence — UNEXPECTED IN PTT MODE, processing ${session.pipeline.audioBufferLength()} bytes`,
+        );
         void session.pipeline.processAudioTurn();
         break;
 

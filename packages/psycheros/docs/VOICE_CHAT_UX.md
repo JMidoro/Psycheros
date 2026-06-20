@@ -43,7 +43,9 @@ unaffected.
   waveform canvas stayed blank (now removed). Server-side modes still acquire
   the stream for PCM streaming.
 - **Rapid-cycling system tones** — auto-restart on `onend` needs a 300ms delay
-  or Chrome's "listening" / "no longer listening" tones overlap.
+  on mobile or Chrome Android's "listening" / "no longer listening" tones
+  overlap. Desktop doesn't have this issue; in PTT mode the restart is immediate
+  so words right after a pause aren't lost in the gap.
 - **Premature turn-end** — `interimResults: false` makes Chrome Android end
   recognition aggressively. Switched to `interimResults: true` (still only send
   finals via the `isFinal` filter).
@@ -69,6 +71,35 @@ looped infinitely fast).
 
 Toggle buttons (PTT, Yin Yang) call `.blur()` after click so the PTT keybind
 doesn't fall through to browser-default "activate focused button" behavior.
+
+### Subtle PTT behaviors (load-bearing)
+
+These are easy to break by accident. Each was a real bug.
+
+- **Silence detector must re-check `pttEnabled` every loop iteration.** The
+  detector is gated at session start
+  (`!pttEnabled && sttProvider !== "browser"`), but if the user toggles PTT on
+  mid-call, the loop is already running. Without a `pttEnabled` check inside
+  `check()` (plus clearing any pending `silenceTimer`), VAD keeps firing
+  `user_silence` mid-hold and ends the turn early.
+- **Browser STT `onend` must restart recognition when still holding PTT.**
+  Chrome's internal VAD fires `onend` after a silence. In PTT mode, if
+  `pttHolding` is still true, restart recognition (immediately on desktop, 300ms
+  delay on mobile for system-tone separation). Otherwise speech after a pause is
+  silently lost. `pttHolding` flips to false in `endPTT()` _before_
+  `recognition.stop()`, so an intentional release does not trigger a restart.
+- **Phrase buffer must not flush mid-hold.** `flushSttPhraseBuffer` bails when
+  `pttHolding` is true. Without this guard, a pause longer than
+  `phraseDebounceMs` mid-hold pushes a partial transcript and the daemon starts
+  processing before the user has released.
+- **`endPTT` flush must defer to `onend`, not fire on `stop()`.** Chrome emits
+  one last `final result` between `recognition.stop()` and `onend` for any
+  speech in flight when the user released. If `endPTT` flushes synchronously (or
+  via `setTimeout(0)`), that trailing phrase is split into its own transcript —
+  and since the daemon is now mid-response to the first transcript, the trailing
+  phrase is dropped by the `isEntityMidResponse` guard. Fix: set a
+  `pendingEndPTTFlush` flag in `endPTT`, run the actual flush in `onend`, with a
+  500ms fallback timeout for the rare case where `onend` never fires.
 
 ## Voice attribution
 
@@ -172,9 +203,12 @@ handle legacy data and LLM parrots that slip through.
   `utils/conversation-lock.ts`). Voice turns and chat turns both hold it from
   user-message-persist through final response. Without it, concurrent writes
   corrupt role alternation.
-- **`recognition.onend` auto-restart** must check `pttEnabled` and `yinYangMode`
-  before restarting, otherwise stopping recognition has no effect (immediate
-  restart).
+- **`recognition.onend` auto-restart** has three branches that are easy to
+  confuse: (1) `pendingEndPTTFlush` → flush the phrase buffer and return
+  (recognition just ended from `endPTT`); (2) `pttEnabled && pttHolding` →
+  restart recognition (Chrome VAD fired mid-hold); (3) non-PTT path → restart
+  with 300ms delay. Out-of-order checks cause either infinite restart loops or
+  lost speech.
 
 ## Open work
 

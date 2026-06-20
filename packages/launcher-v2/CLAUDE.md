@@ -179,6 +179,29 @@ instead of a frozen chat window.
   — they return `undefined`. Don't use them. The launcher has a themed in-app
   modal (`#confirm-modal`) wired via `confirmDialog()` in
   `frontend/js/manager.js`.
+- **WKWebView's `getUserMedia` doesn't trigger the macOS mic permission
+  prompt.** Known wry/Tauri-2 bug: the `WKUIDelegate` media hook isn't wired up,
+  so the app never appears in System Settings → Microphone and voice chat
+  silently fails (the friend-the-user-can't-shake). The
+  `commands::request_mic_permission` command works around it by calling
+  `AVCaptureDevice.requestAccess` via `objc2` to pre-grant at the TCC level —
+  writes the same entry the prompt would, so WKWebView's internal TCC check
+  passes without needing its broken delegate path. `voice.js` invokes the
+  command before `getUserMedia` when `window.__TAURI__` is present. Three
+  load-bearing pieces, all required: `src-tauri/Info.plist`
+  (`NSMicrophoneUsageDescription` — without it the prompt silently fails
+  macOS-wide), the command itself (macOS-only, no-op elsewhere), and
+  `capabilities/psycheros-daemon.json` which grants the daemon origin
+  (`http://localhost:3000`) invoke access — without the capability, the JS call
+  silently throws and is caught, then voice falls through to the broken webview
+  path. If pre-granting turns out not to unblock WKWebView on some macOS
+  versions, the fallback is private API (`_setMediaCaptureRequiresAction:`
+  selector on the WKWebView instance); ad-hoc signing (`signingIdentity: "-"`)
+  makes this viable where upstream wry couldn't. Windows WebView2 and Linux
+  webkit2gtk handle this via the normal browser permission flow — the workaround
+  is `#[cfg(target_os =
+  "macos")]` gated and the capability is
+  `platforms: ["macOS"]` gated to match.
 - **`git reset --hard origin/<branch>` breaks for tags.** Tags don't always get
   a remote-tracking ref. Use `FETCH_HEAD` instead — works for both branches and
   tags, and peels annotated tags to their commit automatically. See

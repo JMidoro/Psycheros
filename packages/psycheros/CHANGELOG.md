@@ -6,6 +6,26 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-06-19
+
+### Fixed
+
+- **Push-to-talk browser-STT no longer drops the trailing phrase.** Chrome's
+  SpeechRecognition emits a final result between `stop()` and `onend`; the old
+  `setTimeout(0)` flush in `endPTT` split that phrase into its own transcript,
+  which the server's `isEntityMidResponse` guard then dropped. `endPTT` now
+  defers the flush to the next `recognition.onend` (500 ms fallback). The
+  silence detector also bails when PTT is enabled (previously it could fire
+  `user_silence` mid-hold), recognition auto-restarts during hold, and
+  `flushSttPhraseBuffer` is suppressed while holding so a long pause can't
+  pre-empt the hold.
+
+- **Message edit button is now always visible and user-message edit textarea
+  uses full width.** The edit button was hover-gated, making it hard to discover
+  (especially on mobile). User-message bubbles now stretch to full content width
+  during editing via a transient `.msg--editing` class, matching the
+  assistant-message edit experience.
+
 ## [0.8.4] - 2026-06-18
 
 ### Fixed
@@ -818,6 +838,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.8.5]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.5
 [0.8.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.4
 [0.8.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.3
 [0.8.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.2

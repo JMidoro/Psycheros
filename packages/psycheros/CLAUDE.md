@@ -146,8 +146,9 @@ Browser (Web Speech API or PCM capture)
     blocks `SpeechRecognition` from accessing the mic on Chrome Android.
     Trade-off: waveform canvas stays blank. Server-side STT modes still acquire
     the mic (needed for PCM streaming).
-  - 300ms delay before `onend` auto-restart to prevent overlapping system tones
-    and let Chrome release the previous session cleanly.
+  - 300ms delay before `onend` auto-restart on mobile to prevent overlapping
+    system tones. Desktop restarts immediately (in PTT mode) so words right
+    after a pause aren't lost in the gap.
   - `interimResults: true` (still only send finals) — Chrome Android ends
     recognition aggressively when `interimResults: false`.
   - Phrase accumulator + `phraseDebounceMs` debounce (default 1200ms) — Chrome
@@ -160,7 +161,12 @@ Browser (Web Speech API or PCM capture)
   (string array of `KeyboardEvent.code` or `MediaSession:action` or
   `Mouse3`/`Mouse4`). Per-conversation toggle in the voice overlay, persists
   across calls. MediaSession bindings toggle (single-press); keyboard/mouse
-  bindings hold (keydown/keyup).
+  bindings hold (keydown/keyup). Four load-bearing PTT subtleties —
+  silence-detector must re-check `pttEnabled` every iteration (toggle-on
+  mid-call), browser-STT `onend` must restart recognition if still holding,
+  phrase buffer must not flush mid-hold, and `endPTT` flush must defer to
+  `onend` (Chrome emits a trailing final between `stop()` and `onend`). See
+  `docs/VOICE_CHAT_UX.md` "Subtle PTT behaviors" for the full rationale.
 - **Yin Yang mode** — toggle button (☯) in the voice overlay switches from voice
   input to text input mid-call. Typed text uses the same
   `{type:
@@ -218,6 +224,13 @@ Browser (Web Speech API or PCM capture)
   browser-side energy VAD for end-of-speech detection, PTT button handling,
   audio playback queue, waveform canvas visualization, mute/deafen/end controls,
   keyboard shortcuts. Exported via `globalThis` for HTMX onclick handlers.
+  Detects Tauri at runtime (`window.__TAURI__?.core?.invoke`) and calls the
+  launcher's `request_mic_permission` command before `getUserMedia` — works
+  around a macOS WKWebView bug where the system mic prompt never fires inside
+  the desktop app. Falls through cleanly in browser mode and on older launchers
+  without the command (try/catch logs a warning). See
+  [`launcher-v2/CLAUDE.md`](../launcher-v2/CLAUDE.md) "Traps that bite" for the
+  full bug + workaround context.
 - `web/css/voice.css` — phone-call overlay styles, waveform canvas, control
   buttons, toast notifications, voice banner. Loaded via `@import "voice.css"`
   in `main.css`.

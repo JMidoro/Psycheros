@@ -130,6 +130,31 @@ async function openVoiceChat(conversationId) {
   // mode we skip getUserMedia entirely and the waveform stays empty.
   // Status text + STT event toasts carry the visual feedback instead.
   if (earlySttProvider !== 'browser') {
+    // Tauri macOS bug workaround. WKWebView's media-capture delegate
+    // isn't wired up in wry, so getUserMedia silently fails with no
+    // system prompt — Psycheros never appears in System Settings →
+    // Microphone. The launcher's request_mic_permission command
+    // pre-requests via AVCaptureDevice's public API, writing the same
+    // TCC entry the prompt would. Once that entry exists, WKWebView's
+    // internal TCC check passes without needing its (broken) delegate
+    // path. No-op on Windows/Linux; falls through cleanly when running
+    // standalone in a browser.
+    if (window.__TAURI__?.core?.invoke) {
+      try {
+        const granted = await window.__TAURI__.core.invoke('request_mic_permission');
+        if (granted === false) {
+          showToast('Microphone permission denied.', 'warning');
+          cleanup();
+          return;
+        }
+      } catch (err) {
+        // Older launcher without the command, capability not granted,
+        // or invoke unavailable — fall through to getUserMedia and let
+        // its error path surface the failure.
+        console.warn('[voice] Tauri mic permission request failed:', err);
+      }
+    }
+
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -450,6 +475,11 @@ function cleanup() {
     clearTimeout(sttPhraseDebounceTimer);
     sttPhraseDebounceTimer = null;
   }
+  if (endPTTFlushTimer) {
+    clearTimeout(endPTTFlushTimer);
+    endPTTFlushTimer = null;
+  }
+  pendingEndPTTFlush = false;
   sttPhraseBuffer = [];
   teardownMediaSessionPTT();
   releaseWakeLock();
@@ -655,9 +685,23 @@ let sttResultCount = 0;
 // profile's Audio settings (default 1200ms).
 let sttPhraseBuffer = [];
 let sttPhraseDebounceTimer = null;
+// True between endPTT() and the next recognition.onend (or the fallback
+// timeout). Signals onend to flush the phrase buffer — Chrome emits any
+// pending final results BEFORE onend, so flushing there captures the
+// last phrase instead of splitting it into a separate transcript.
+let pendingEndPTTFlush = false;
+let endPTTFlushTimer = null;
 
 function flushSttPhraseBuffer() {
   sttPhraseDebounceTimer = null;
+  if (sttDebug) console.log('[Voice:stt] flushSttPhraseBuffer — pttHolding=' + pttHolding + ' phrases=' + sttPhraseBuffer.length);
+  // Don't flush mid-PTT-hold — the user controls when their utterance
+  // ends via button release. endPTT() calls this explicitly after
+  // recognition.stop(), so the buffer flushes on release. Without this
+  // guard, a pause longer than phraseDebounceMs mid-hold would push a
+  // partial transcript to the daemon and trigger processing before the
+  // user has released PTT.
+  if (pttHolding) return;
   if (sttPhraseBuffer.length === 0) return;
   const combined = sttPhraseBuffer.join(' ').trim();
   sttPhraseBuffer = [];
@@ -738,6 +782,7 @@ function startBrowserSTT(opts) {
         normNew.startsWith(normBuf) ||
         normBuf.startsWith(normNew)
       );
+      if (sttDebug) console.log('[Voice:stt] final result — pttHolding=' + pttHolding + ' cumulative=' + isCumulative + ' text="' + transcript.slice(0, 80) + '"');
       if (isCumulative) {
         // Take the longer one — usually the new transcript, but if the
         // recognizer revised downward (rare) keep what we had.
@@ -799,7 +844,50 @@ function startBrowserSTT(opts) {
   // speech service a moment to fully release the previous session,
   // which makes the next start() more reliable.
   recognition.onend = () => {
-    if (pttEnabled) return;
+    if (sttDebug) console.log('[Voice:stt] onend fired — pttEnabled=' + pttEnabled + ' pttHolding=' + pttHolding + ' pendingEndPTTFlush=' + pendingEndPTTFlush);
+    // If endPTT() was called, this onend is the signal that Chrome has
+    // finished emitting pending finals. Flush now — at this point the
+    // buffer contains every phrase including the trailing one that
+    // arrives between stop() and onend.
+    if (pendingEndPTTFlush) {
+      pendingEndPTTFlush = false;
+      if (endPTTFlushTimer) {
+        clearTimeout(endPTTFlushTimer);
+        endPTTFlushTimer = null;
+      }
+      if (sttDebug) console.log('[Voice:stt] endPTT flush — onend fired, flushing ' + sttPhraseBuffer.length + ' phrase(s)');
+      flushSttPhraseBuffer();
+      return;
+    }
+    if (pttEnabled) {
+      // Chrome's SpeechRecognition has its own internal VAD that fires
+      // onend after a silence. In PTT mode, if the user is still holding
+      // the button, restart recognition so speech after a pause is still
+      // captured. Without this, recognition stays dead until the user
+      // releases and re-presses PTT.
+      //
+      // pttHolding flips to false in endPTT() BEFORE recognition.stop()
+      // runs, so an intentional button release does NOT trigger a restart
+      // here. The 300ms delay is for Chrome Android only — its OS plays
+      // overlapping stop/start tones without it, and the speech service
+      // needs a moment to release the previous session. Desktop Chrome
+      // doesn't need the delay; restart immediately so we don't miss the
+      // first syllable after a pause.
+      if (pttHolding && !isMuted && !yinYangMode) {
+        const restartDelay = isMobileBrowser() ? 300 : 0;
+        setTimeout(() => {
+          if (pttHolding && !isMuted && !yinYangMode && recognition) {
+            try {
+              recognition.start();
+              if (sttDebug) console.log('[Voice:stt] restart succeeded');
+            } catch (err) {
+              console.warn('[Voice:stt] restart failed:', err && err.message ? err.message : err);
+            }
+          }
+        }, restartDelay);
+      }
+      return;
+    }
     if (yinYangMode) return;
     if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN || isMuted) return;
     setTimeout(() => {
@@ -834,6 +922,21 @@ function startSilenceDetector() {
     if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
     if (!analyserNode) return;
 
+    // PTT mode: the user controls turn end via button release. Skip VAD
+    // logic entirely so a mid-call toggle into PTT mode doesn't keep
+    // firing user_silence. Still clear any pending silenceTimer + reset
+    // isRecording so VAD starts clean when PTT is toggled back off. Loop
+    // keeps running so VAD resumes automatically on toggle-off.
+    if (pttEnabled) {
+      if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+      }
+      isRecording = false;
+      setTimeout(check, VAD_CHECK_INTERVAL_MS);
+      return;
+    }
+
     const bufferLength = analyserNode.frequencyBinCount;
     if (silenceLevel.length !== bufferLength) {
       silenceLevel = new Uint8Array(bufferLength);
@@ -861,6 +964,14 @@ function startSilenceDetector() {
     } else if (isRecording && !silenceTimer && !isMuted) {
       // Silence after speech — start the turn-end timer
       silenceTimer = setTimeout(() => {
+        // Defensive: if PTT was toggled on while we were waiting, bail.
+        // The user now controls turn end via button release. (check()
+        // also bails on pttEnabled, but the timer may already be pending
+        // from a previous iteration.)
+        if (pttEnabled) {
+          silenceTimer = null;
+          return;
+        }
         if (voiceWs && voiceWs.readyState === WebSocket.OPEN) {
           voiceWs.send(JSON.stringify({ type: 'user_silence' }));
         }
@@ -947,11 +1058,18 @@ function togglePTTMode() {
   // hold-to-talk button below.
   if (toggleBtn) toggleBtn.blur();
   if (pttEnabled) {
-    // Entering PTT mode — stop continuous STT, silence detector already
-    // gated on pttEnabled.
+    // Entering PTT mode — stop continuous STT and cancel any pending
+    // silence timer. The detector's check() loop also bails on pttEnabled,
+    // but a pending silenceTimer from before the toggle would still fire
+    // and end the turn mid-hold — clear it explicitly.
     if (recognition) {
       try { recognition.stop(); } catch {}
     }
+    if (silenceTimer) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+    }
+    isRecording = false;
   } else {
     // Leaving PTT mode — resume continuous STT if applicable
     if (sttProvider === 'browser' && recognition && !isMuted) {
@@ -982,6 +1100,7 @@ async function savePTTSetting() {
 function startPTT() {
   if (!pttEnabled) return;
   if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
+  if (sttDebug) console.log('[Voice:ptt] startPTT — sttProvider=' + sttProvider);
   voiceWs.send(JSON.stringify({ type: 'ptt_start' }));
   pttHolding = true;
   const btn = document.getElementById('voice-hold-btn');
@@ -998,19 +1117,31 @@ function startPTT() {
 function endPTT() {
   if (!pttEnabled) return;
   if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
+  if (sttDebug) console.log('[Voice:ptt] endPTT — buffer has ' + sttPhraseBuffer.length + ' phrase(s): "' + sttPhraseBuffer.join(' | ').slice(0, 200) + '"');
   voiceWs.send(JSON.stringify({ type: 'ptt_end' }));
   pttHolding = false;
   const btn = document.getElementById('voice-hold-btn');
   if (btn) btn.classList.remove('voice-hold-circle--active');
-  // Browser STT mode: stop recognition on release. Any finalized result
-  // fires before onend completes. After stopping, immediately flush the
-  // phrase buffer — the user explicitly released the button, so we know
-  // they're done talking and shouldn't wait for the debounce.
+  // Browser STT mode: stop recognition on release. Chrome emits any
+  // pending final result(s) BEFORE onend fires — so we must defer the
+  // flush until onend, otherwise the last phrase gets split into a
+  // separate transcript. (Server drops transcripts that arrive while
+  // the entity is mid-response, so the split phrase would be lost.)
+  //
+  // Fallback timeout (500ms) covers the rare case where onend never
+  // fires — e.g., recognition was already stopped, or Chrome's speech
+  // service is in a weird state.
   if (sttProvider === 'browser' && recognition) {
+    pendingEndPTTFlush = true;
     try { recognition.stop(); } catch {}
-    // Defer one event loop tick so any final onresult from the stop()
-    // has a chance to land in the buffer before we flush.
-    setTimeout(flushSttPhraseBuffer, 0);
+    if (endPTTFlushTimer) clearTimeout(endPTTFlushTimer);
+    endPTTFlushTimer = setTimeout(() => {
+      if (pendingEndPTTFlush) {
+        if (sttDebug) console.log('[Voice:ptt] endPTT flush — fallback timeout fired (onend did not fire)');
+        pendingEndPTTFlush = false;
+        flushSttPhraseBuffer();
+      }
+    }, 500);
   }
   refreshDisplayState();
 }

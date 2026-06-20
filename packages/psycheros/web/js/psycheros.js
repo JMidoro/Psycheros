@@ -4612,6 +4612,9 @@ function startMessageEdit(messageId) {
   const editContainer = document.createElement('div');
   editContainer.className = 'msg-edit-container';
 
+  // Expand user-message bubble during editing so the textarea has room
+  msgElement.classList.add('msg--editing');
+
   // Create textarea
   const textarea = document.createElement('textarea');
   textarea.className = 'msg-edit-textarea';
@@ -4669,6 +4672,9 @@ function cancelMessageEdit(messageId) {
   // Show edit button
   const editBtn = msgElement.querySelector('.msg-edit-btn') || msgElement.querySelector('.discord-msg-edit-btn');
   if (editBtn) editBtn.style.display = '';
+
+  // Restore normal bubble width
+  msgElement.classList.remove('msg--editing');
 
   // Clean up stored content
   delete msgElement.dataset.originalContent;

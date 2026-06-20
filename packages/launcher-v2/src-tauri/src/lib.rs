@@ -300,6 +300,7 @@ pub fn run() {
             commands::rollback_to_snapshot,
             commands::get_tahoe_compat,
             commands::set_tahoe_compat,
+            commands::request_mic_permission,
         ])
         .on_window_event(|window, event| {
             // Closing the manager window doesn't unconditionally quit

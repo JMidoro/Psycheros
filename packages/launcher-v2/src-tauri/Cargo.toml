@@ -1,6 +1,6 @@
 [package]
 name = "psycheros-launcher"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2021"
 description = "Psycheros desktop launcher — Tauri app + OS-supervised daemon"
 license = "MIT"
@@ -94,6 +94,20 @@ windows-sys = { version = "0.60", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+
+# macOS-only: objc2 + block2 for the request_mic_permission command.
+# WKWebView's media-capture delegate isn't wired up in wry, so
+# getUserMedia silently fails with no system prompt. We work around it
+# by pre-requesting mic permission via AVCaptureDevice's public API,
+# which writes the same TCC entry the system prompt would. block2 is
+# required because the API is callback-based and Rust needs to construct
+# an Objective-C block to receive the result. objc2-foundation gives us
+# NSString for the AVMediaTypeAudio constant ("soun"). Kept under
+# target-cfg so Windows/Linux builds don't pay the dep weight.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+block2 = "0.6"
 
 [features]
 default = []

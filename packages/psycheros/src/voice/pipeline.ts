@@ -144,7 +144,19 @@ export class WalkieTalkieSession {
     this.setState("processing");
     this.currentTurnAbort = new AbortController();
     try {
+      // Diagnostic: log audio duration so we can tell whether truncation
+      // happens before Deepgram (frames missing) or after (Deepgram endpointing).
+      // 16kHz mono Int16 = 32000 bytes/sec.
+      const audioSeconds = (audio.byteLength / 32000).toFixed(2);
+      console.log(
+        `[Voice:debug] processAudioTurn — sending ${audio.byteLength} bytes (${audioSeconds}s) to ${this.profile.providerSettings.stt.provider}`,
+      );
       const { text: rawText } = await transcribe(audio, this.profile);
+      console.log(
+        `[Voice:debug] STT returned ${rawText.length} chars: ${
+          rawText.slice(0, 200)
+        }`,
+      );
       const text = applySTTCorrections(rawText.trim(), this.profile);
       if (!text) {
         this.setState("idle");
@@ -281,6 +293,11 @@ export class WalkieTalkieSession {
    */
   clearAudioBuffer(): void {
     this.audioBuffer = [];
+  }
+
+  /** Current size of the recording buffer in bytes (diagnostic). */
+  audioBufferLength(): number {
+    return this.audioBuffer.reduce((n, a) => n + a.length, 0);
   }
 
   /** Stop the session entirely. Future events are dropped. */
