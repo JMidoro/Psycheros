@@ -7,6 +7,19 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-06-21
+
+### Fixed
+
+- `AVAudioFormat` initializer now uses the correct CamelCase selector name
+  (`initWithCommonFormat_sampleRate_channels_interleaved`). objc2 0.6+ generates
+  method names preserving the ObjC selector segments as CamelCase, not
+  snake_case — the prior `init_with_common_format_...` name did not exist on
+  `Allocated<AVAudioFormat>`. Also handles the initializer's
+  `Option<Retained<...>>` return (can fail and return nil for unsupported
+  formats) with `.ok_or(...)`. With mono/16kHz Float32 the call won't fail in
+  practice, but the type system requires the unwrap.
+
 ## [0.2.25] - 2026-06-21
 
 ### Fixed
