@@ -7,6 +7,28 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-06-21
+
+### Fixed
+
+- Plugin Builder registration renamed from `mic-capture` to
+  `psycheros-mic-capture` to match the ACL namespace Tauri derives from the
+  crate name (`tauri-plugin-psycheros-mic-capture`). With the mismatch, JS
+  invokes targeting `plugin:mic-capture|...` were rejected by Tauri 2's ACL
+  ("Command not allowed by ACL") even though the capability granted
+  `psycheros-mic-capture:default` — Tauri resolves the invoke prefix against the
+  registered Builder name, not the package-derived namespace. Native mic capture
+  now authorizes correctly.
+
+### Changed
+
+- Removed dead `permissions/allow-request-mic-permission.toml` — defined a
+  permission for a command that no longer exists as a Tauri command
+  (`request_mic_permission` is now internal to the mic-capture plugin).
+- Updated the `psycheros-daemon` capability description to reflect the current
+  architecture (plugin handles macOS system permission internally; the
+  capability just grants the plugin's start/stop commands).
+
 ## [0.2.21] - 2026-06-20
 
 ### Changed

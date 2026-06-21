@@ -172,7 +172,7 @@ async function openVoiceChat(conversationId) {
         voiceWs.send(new Uint8Array(message).buffer);
       };
       try {
-        await tauriInvoke('plugin:mic-capture|start_capture', { onFrame: channel });
+        await tauriInvoke('plugin:psycheros-mic-capture|start_capture', { onFrame: channel });
         nativeCaptureActive = true;
         if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
           globalThis.appendVoiceDebug('mic-perm', 'native capture started');
@@ -482,7 +482,7 @@ function cleanup() {
   // to start if a previous one is somehow still active.
   if (nativeCaptureActive && window.__TAURI__?.core?.invoke) {
     nativeCaptureActive = false;
-    window.__TAURI__.core.invoke('plugin:mic-capture|stop_capture').catch((err) => {
+    window.__TAURI__.core.invoke('plugin:psycheros-mic-capture|stop_capture').catch((err) => {
       console.warn('[voice] stop_capture failed:', err);
     });
   }

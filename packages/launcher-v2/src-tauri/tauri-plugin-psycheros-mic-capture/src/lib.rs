@@ -43,7 +43,13 @@ use tauri::{plugin::TauriPlugin, Manager, Runtime};
 /// Plugin entry point. Wire from the host app's `.tauri::Builder` chain
 /// via `.plugin(tauri_plugin_psycheros_mic_capture::init())`.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    tauri::plugin::Builder::<R>::new("mic-capture")
+    // Plugin name MUST match the ACL namespace Tauri derives from the
+    // package name (`tauri-plugin-psycheros-mic-capture` → namespace
+    // `psycheros-mic-capture`). A mismatch here causes "not allowed by
+    // ACL" even when the capability file grants the permission — the
+    // runtime resolves invoke('plugin:<name>|...') against <name>, not
+    // against the package-derived namespace.
+    tauri::plugin::Builder::<R>::new("psycheros-mic-capture")
         .invoke_handler(tauri::generate_handler![
             commands::start_capture,
             commands::stop_capture,

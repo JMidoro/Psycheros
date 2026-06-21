@@ -6020,12 +6020,12 @@ async function runVoiceChatTest() {
         firstFrameBytes = Array.isArray(message) ? message.length : 0;
       }
     };
-    appendVoiceDebug('mic-perm', "Calling invoke('plugin:mic-capture|start_capture')...");
+    appendVoiceDebug('mic-perm', "Calling invoke('plugin:psycheros-mic-capture|start_capture')...");
     try {
-      await tauriInvoke('plugin:mic-capture|start_capture', { onFrame: channel });
+      await tauriInvoke('plugin:psycheros-mic-capture|start_capture', { onFrame: channel });
       appendVoiceDebug('mic-perm', 'start_capture returned OK — listening for 2 seconds');
       await new Promise((r) => setTimeout(r, 2000));
-      await tauriInvoke('plugin:mic-capture|stop_capture');
+      await tauriInvoke('plugin:psycheros-mic-capture|stop_capture');
       appendVoiceDebug(
         'mic-perm',
         `native capture OK — ${frameCount} frames in 2s (first frame: ${firstFrameBytes} bytes)`,
@@ -6035,7 +6035,7 @@ async function runVoiceChatTest() {
       appendVoiceDebug('mic-perm', `native capture FAILED: ${detail}`);
       // Best-effort stop in case start succeeded but something else failed
       try {
-        await tauriInvoke('plugin:mic-capture|stop_capture');
+        await tauriInvoke('plugin:psycheros-mic-capture|stop_capture');
       } catch {}
     }
   } else {

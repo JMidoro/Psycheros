@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-06-21
+
+### Fixed
+
+- Voice-chat JS invoke paths updated from `plugin:mic-capture|...` to
+  `plugin:psycheros-mic-capture|...` to match the launcher plugin's registered
+  name. The old name caused every native mic-capture call to be rejected by
+  Tauri 2's ACL ("Command not allowed by ACL") even though the capability
+  granted the right permission — Tauri resolves the invoke prefix against the
+  Builder registration name, not the package-derived namespace. Native mic
+  capture now reaches the plugin.
+
 ## [0.8.10] - 2026-06-20
 
 ### Fixed
@@ -903,6 +915,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.8.11]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.11
 [0.8.10]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.10
 [0.8.9]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.9
 [0.8.8]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.8
