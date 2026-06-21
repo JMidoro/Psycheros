@@ -7,6 +7,18 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-06-21
+
+### Fixed
+
+- All remaining `objc2` / `objc2-avf-audio` method calls in the macOS
+  mic-capture module are now wrapped in `unsafe` blocks (`AVAudioEngine::new()`,
+  `AVAudioFormat::initWithCommonFormat_...`, `buffer.frameLength()`).
+- `installTapOnBus` now receives `RcBlock::as_ptr(&tap)` instead of `&mut *tap`
+  — `RcBlock` does not implement `DerefMut`, so the previous raw-pointer cast
+  did not compile. The method expects a `*mut DynBlock<dyn Fn(...)>` raw
+  pointer, which `as_ptr` provides canonically (block2 0.6 API).
+
 ## [0.2.27] - 2026-06-21
 
 ### Fixed

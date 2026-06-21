@@ -133,49 +133,50 @@ fn build_and_start_capture(
         AVAudioCommonFormat, AVAudioEngine, AVAudioFormat, AVAudioPCMBuffer, AVAudioTime,
     };
 
-    // AVAudioEngine::new() + inputNode() are marked unsafe in
-    // objc2-avf-audio — wrap the whole setup block.
-    let engine = AVAudioEngine::new();
-    let input_node = unsafe { engine.inputNode() };
-
-    // Build a 16kHz mono Float32 format. AVAudioEngine auto-inserts an
-    // internal converter from the hardware 48kHz — saves us manual
-    // decimation. alloc() lives on the AnyThread trait in objc2 0.6.
-    //
-    // objc2 init methods on stable Rust are associated functions, not
-    // methods — the `this: Allocated<Self>` first parameter is a
-    // positional arg, not a `self:` receiver. So we call them as
-    // `Type::init_name(allocated, ...args)`, NOT `allocated.init_name(...)`.
-    // (Method syntax would need `unstable-arbitrary-self-types` which
-    // is nightly-only.) Returns Option<Retained<...>> (nil if params
-    // invalid); 1-channel mono won't fail but the type system needs
-    // the .ok_or() handling.
-    let format = AVAudioFormat::initWithCommonFormat_sampleRate_channels_interleaved(
-        AVAudioFormat::alloc(),
-        AVAudioCommonFormat::PCMFormatFloat32,
-        16000.0,
-        1,
-        false,
-    )
-    .ok_or("failed to create 16kHz mono AVAudioFormat")?;
+    // AVAudioEngine::new() + inputNode() + AVAudioFormat init are all
+    // marked unsafe in objc2-avf-audio — single unsafe block for the
+    // engine + format setup.
+    let (engine, input_node, format) = unsafe {
+        let engine = AVAudioEngine::new();
+        let input_node = engine.inputNode();
+        // objc2 init methods on stable Rust are associated functions,
+        // not methods — `this: Allocated<Self>` is a positional arg,
+        // not a `self:` receiver. Call as `Type::init_name(allocated,
+        // ...args)`, NOT `allocated.init_name(...)`. Method syntax
+        // would need `unstable-arbitrary-self-types` (nightly).
+        // Returns Option<Retained<...>> (nil if params invalid);
+        // 1-channel mono won't fail but the type system needs .ok_or.
+        let format = AVAudioFormat::initWithCommonFormat_sampleRate_channels_interleaved(
+            AVAudioFormat::alloc(),
+            AVAudioCommonFormat::PCMFormatFloat32,
+            16000.0,
+            1,
+            false,
+        )
+        .ok_or("failed to create 16kHz mono AVAudioFormat")?;
+        (engine, input_node, format)
+    }?;
 
     // Tap block: receives (AVAudioPCMBuffer *, AVAudioTime *).
     // Convert Float32 → Int16 PCM and ship via the channel. RcBlock is
     // heap-allocated and reference-counted — block2 0.6 has no
     // Block::new constructor, only RcBlock::new and StackBlock::new.
+    //
+    // Inside the closure, every objc2 method on the buffer (as_ref,
+    // frameLength, floatChannelData) is itself unsafe — wrap each call.
     let tap = RcBlock::new(
-        move |buf: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| {
-            let buffer = unsafe { buf.as_ref() };
+        move |buf: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
+            let buffer = buf.as_ref();
             let frames = buffer.frameLength() as usize;
             // floatChannelData returns a NonNull<NonNull<f32>> (one inner
             // pointer per channel). Mono = single channel, so deref once
             // to get the NonNull<f32> for channel 0. NonNull doesn't impl
             // Deref — use .as_ptr() to get a real *const f32 first.
-            let ch0_ptr = unsafe { *buffer.floatChannelData() };
+            let ch0_ptr = *buffer.floatChannelData();
             let sample_ptr = ch0_ptr.as_ptr();
             let mut pcm: Vec<u8> = Vec::with_capacity(frames * 2);
             for i in 0..frames {
-                let sample = unsafe { *sample_ptr.add(i) };
+                let sample = *sample_ptr.add(i);
                 let clamped = sample.clamp(-1.0, 1.0);
                 let int16 = (clamped * 32767.0) as i16;
                 pcm.extend_from_slice(&int16.to_le_bytes());
@@ -184,15 +185,17 @@ fn build_and_start_capture(
         },
     );
 
-    // installTapOnBus_bufferSize_format_block expects a *mut Block<...>,
-    // not a &RcBlock. &mut *tap derefs the RcBlock to its inner Block
-    // and takes a mutable ref the API can coerce to a raw pointer.
+    // installTapOnBus_bufferSize_format_block expects the block as a
+    // raw `*mut DynBlock<...>` pointer. RcBlock derefs to Block but not
+    // mutably, so &mut *tap won't compile. Use RcBlock::as_ptr(&tap)
+    // to get the canonical *mut Block<F> that coerces to the dyn-block
+    // pointer the API expects.
     unsafe {
         input_node.installTapOnBus_bufferSize_format_block(
             0,
             1024,
             Some(&format),
-            &mut *tap,
+            RcBlock::as_ptr(&tap),
         );
         engine.prepare();
         // ObjC selector is -startAndReturnError: which objc2-avf-audio
