@@ -7,6 +7,19 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-06-21
+
+### Fixed
+
+- Expanded the `psycheros-daemon` capability's remote URL patterns so that URLs
+  with paths (e.g. `http://localhost:3000/`, `http://localhost:3000/c/abc`) are
+  allowed by Tauri 2's glob matcher. Previously only the bare origin and
+  origin-with-port forms were listed (`http://localhost`, `http://localhost:*`),
+  and Tauri's `*` glob does not match a leading `/` — so the mic-capture command
+  was rejected at runtime with "not allowed by ACL" even though the webview had
+  loaded the daemon correctly. Added `/`, `:*/`, and `:*/**` variants for both
+  `localhost` and `127.0.0.1`.
+
 ## [0.2.29] - 2026-06-21
 
 ### Fixed
