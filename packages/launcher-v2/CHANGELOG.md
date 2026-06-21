@@ -7,6 +7,29 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-06-21
+
+### Fixed
+
+- Native mic-capture plugin's `AVAudioEngine` API calls now match the
+  objc2-avf-audio 0.3 method signatures (six API surface mismatches from the
+  previous cycle's compile). All mechanical fixes from compiler diagnostics, no
+  architectural changes:
+
+  - `AVAudioFormat::alloc()` requires `objc2::AnyThread` trait in scope (objc2
+    0.6 moved `alloc()` from inherent to trait).
+  - `AVAudioCommonFormat::PCMFormatFloat32` (the constant name has "Format" in
+    the middle).
+  - `floatChannelData()` returns `NonNull<NonNull<f32>>`; deref once, then
+    `.as_ptr()` to get a real `*const f32` that can be indexed.
+  - `installTapOnBus_bufferSize_format_block` expects `*mut Block<...>`, not
+    `&RcBlock` — pass `&mut *tap` to coerce the deref'd RcBlock.
+  - `engine.startAndReturnError()` (ObjC selector is `-startAndReturnError:`;
+    objc2 maps verbatim). Returns `Result<(), NSError>`.
+  - `AVAudioEngine::inputNode()` is marked `unsafe`; wrapped the call sequences
+    in both `build_and_start_capture` and `stop_engine_and_remove_tap` inside
+    `unsafe {}` blocks.
+
 ## [0.2.24] - 2026-06-21
 
 ### Fixed

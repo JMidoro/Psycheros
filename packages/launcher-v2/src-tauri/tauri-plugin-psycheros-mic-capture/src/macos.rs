@@ -128,18 +128,21 @@ fn build_and_start_capture(
     use std::ptr::NonNull;
 
     use block2::RcBlock;
+    use objc2::AnyThread;
     use objc2_avf_audio::{
         AVAudioCommonFormat, AVAudioEngine, AVAudioFormat, AVAudioPCMBuffer, AVAudioTime,
     };
 
+    // AVAudioEngine::new() + inputNode() are marked unsafe in
+    // objc2-avf-audio — wrap the whole setup block.
     let engine = AVAudioEngine::new();
-    let input_node = engine.inputNode();
+    let input_node = unsafe { engine.inputNode() };
 
     // Build a 16kHz mono Float32 format. AVAudioEngine auto-inserts an
     // internal converter from the hardware 48kHz — saves us manual
-    // decimation.
+    // decimation. alloc() lives on the AnyThread trait in objc2 0.6.
     let format = AVAudioFormat::alloc().init_with_common_format_sample_rate_channels_interleaved(
-        AVAudioCommonFormat::PCMFloat32,
+        AVAudioCommonFormat::PCMFormatFloat32,
         16000.0,
         1,
         false,
@@ -153,12 +156,15 @@ fn build_and_start_capture(
         move |buf: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| {
             let buffer = unsafe { buf.as_ref() };
             let frames = buffer.frameLength() as usize;
-            // floatChannelData returns a pointer to a *const f32 (one per channel).
-            // Mono = single channel, so we deref once.
+            // floatChannelData returns a NonNull<NonNull<f32>> (one inner
+            // pointer per channel). Mono = single channel, so deref once
+            // to get the NonNull<f32> for channel 0. NonNull doesn't impl
+            // Deref — use .as_ptr() to get a real *const f32 first.
             let ch0_ptr = unsafe { *buffer.floatChannelData() };
+            let sample_ptr = ch0_ptr.as_ptr();
             let mut pcm: Vec<u8> = Vec::with_capacity(frames * 2);
             for i in 0..frames {
-                let sample = unsafe { *ch0_ptr.add(i) };
+                let sample = unsafe { *sample_ptr.add(i) };
                 let clamped = sample.clamp(-1.0, 1.0);
                 let int16 = (clamped * 32767.0) as i16;
                 pcm.extend_from_slice(&int16.to_le_bytes());
@@ -167,15 +173,20 @@ fn build_and_start_capture(
         },
     );
 
+    // installTapOnBus_bufferSize_format_block expects a *mut Block<...>,
+    // not a &RcBlock. &mut *tap derefs the RcBlock to its inner Block
+    // and takes a mutable ref the API can coerce to a raw pointer.
     unsafe {
         input_node.installTapOnBus_bufferSize_format_block(
             0,
             1024,
             Some(&format),
-            &tap,
+            &mut *tap,
         );
         engine.prepare();
-        engine.start().map_err(|e| format!("engine.start: {e}"))?;
+        // ObjC selector is -startAndReturnError: which objc2-avf-audio
+        // maps to startAndReturnError() returning Result<(), NSError>.
+        engine.startAndReturnError().map_err(|e| format!("engine.start: {e}"))?;
     }
 
     // RcBlock is already reference-counted — the engine retains the block
@@ -188,8 +199,10 @@ fn build_and_start_capture(
 
 #[cfg(target_os = "macos")]
 fn stop_engine_and_remove_tap(active: ActiveCapture) {
-    let input_node = active.engine.inputNode();
+    // inputNode() is marked unsafe in objc2-avf-audio — wrap the whole
+    // teardown block so the call is inside unsafe {}.
     unsafe {
+        let input_node = active.engine.inputNode();
         input_node.removeTapOnBus(0);
         active.engine.stop();
     }
