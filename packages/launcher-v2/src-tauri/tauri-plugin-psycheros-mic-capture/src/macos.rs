@@ -155,7 +155,7 @@ fn build_and_start_capture(
         )
         .ok_or("failed to create 16kHz mono AVAudioFormat")?;
         (engine, input_node, format)
-    }?;
+    };
 
     // Tap block: receives (AVAudioPCMBuffer *, AVAudioTime *).
     // Convert Float32 → Int16 PCM and ship via the channel. RcBlock is

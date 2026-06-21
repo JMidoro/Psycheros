@@ -7,6 +7,19 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-06-21
+
+### Fixed
+
+- Removed stray `?` operator on the `unsafe` block that sets up the audio engine
+  and format tuple. The `?` was intended to propagate the
+  `Option<Retained<AVAudioFormat>>` from the initializer, but that is already
+  handled by `.ok_or(...)?` inside the block. Applying `?` to the block's return
+  value — a
+  `(Retained<AVAudioEngine>, Retained<AVAudioInputNode>,
+  Retained<AVAudioFormat>)`
+  tuple — does not compile because tuples do not implement `Try`.
+
 ## [0.2.28] - 2026-06-21
 
 ### Fixed
