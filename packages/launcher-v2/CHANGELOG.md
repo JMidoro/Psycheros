@@ -7,6 +7,22 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.32] - 2026-06-22
+
+### Fixed
+
+- Extended the Tahoe compatibility V8 flags to include `--sandbox=off` alongside
+  `--jitless`. The friend's test confirmed `--jitless` was applied correctly
+  (visible in both the plist env var and the daemon's `ps` args), but V8 still
+  crashed with "Failed to reserve virtual memory for CodeRange". V8's sandbox
+  feature (default-on in recent 64-bit builds) reserves a 1TB virtual address
+  range; Tahoe's VM subsystem fails this even when jitless shrinks the CodeRange
+  itself. Disabling the sandbox is acceptable here because the daemon already
+  runs locally with `-A` (full user-level access), so the sandbox's V8-exploit
+  defense doesn't add meaningful protection. Updated the
+  `tahoe_compat_true_includes_deno_v8_flags` test to expect the combined flag
+  string.
+
 ## [0.2.31] - 2026-06-21
 
 ### Fixed
