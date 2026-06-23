@@ -57,6 +57,10 @@ pub async fn platform_start_capture<R: Runtime>(
     state: State<'_, CaptureState>,
     on_frame: Channel<Vec<u8>>,
 ) -> Result<(), String> {
+    eprintln!(
+        "[mic-capture] start_capture thread: {:?}",
+        std::thread::current().id()
+    );
     // Reentrancy guard — if already active, refuse.
     {
         let guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
@@ -81,13 +85,22 @@ pub async fn platform_start_capture<R: Runtime>(
     let mut guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
     *guard = Some(active);
 
+    eprintln!("[mic-capture] start_capture complete");
     Ok(())
 }
 
 pub fn platform_stop_capture(state: State<'_, CaptureState>) -> Result<(), String> {
+    eprintln!(
+        "[mic-capture] stop_capture thread: {:?}",
+        std::thread::current().id()
+    );
     let mut guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
     if let Some(active) = guard.take() {
+        eprintln!("[mic-capture] stop_capture calling stop_engine_and_remove_tap");
         stop_engine_and_remove_tap(active);
+        eprintln!("[mic-capture] stop_capture teardown returned");
+    } else {
+        eprintln!("[mic-capture] stop_capture no active session, nothing to do");
     }
     Ok(())
 }
@@ -226,10 +239,18 @@ fn stop_engine_and_remove_tap(active: ActiveCapture) {
     //
     // inputNode() is marked unsafe in objc2-avf-audio — wrap the
     // whole teardown block so all calls are inside unsafe {}.
+    eprintln!("[mic-capture] stop_engine_and_remove_tap enter, thread: {:?}", std::thread::current().id());
+    eprintln!("[mic-capture] before engine.stop()");
     unsafe {
         active.engine.stop();
-        let input_node = active.engine.inputNode();
-        input_node.removeTapOnBus(0);
     }
+    eprintln!("[mic-capture] after engine.stop(), before inputNode()");
+    unsafe {
+        let input_node = active.engine.inputNode();
+        eprintln!("[mic-capture] got input_node, before removeTapOnBus");
+        input_node.removeTapOnBus(0);
+        eprintln!("[mic-capture] after removeTapOnBus");
+    }
+    eprintln!("[mic-capture] stop_engine_and_remove_tap returning, ActiveCapture about to drop");
     // ActiveCapture drops here, releasing the engine + format.
 }
