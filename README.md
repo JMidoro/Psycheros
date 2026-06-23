@@ -64,9 +64,29 @@ knobs for the LLM endpoint, RAG, web search, Discord, image generation, etc.
 
 ### From source
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — Deno version pinned in
-[`.deno-version`](.deno-version), then `deno task dev` from inside the package
-you want to work on.
+If you prefer the command line, are on Linux, or want to hack on the code:
+
+```bash
+# 1. Install Deno 2.x — https://deno.land/install
+curl -fsSL https://deno.land/install.sh | sh   # macOS/Linux
+# irm https://deno.land/install.ps1 | iex      # Windows (PowerShell)
+
+# 2. Clone and enter the Psycheros package
+git clone https://github.com/PsycherosAI/Psycheros.git
+cd Psycheros/packages/psycheros
+
+# 3. Set your API key (optional — can also do this in the web UI)
+cp .env.example .env
+# Edit .env and set ZAI_API_KEY=your-key
+
+# 4. Start
+deno task dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) and follow the first-run
+setup. The full walkthrough (background service setup, troubleshooting, data
+directory guide) is in the
+[installation guide](https://psycherosai.github.io/Psycheros/psycheros/install-from-source/).
 
 ## What's in the box
 
