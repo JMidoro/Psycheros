@@ -3023,8 +3023,15 @@ export async function handleMemoriesEditorFragment(
     });
   }
 
-  // For MCP lookup, extract the date portion (before any instance suffix)
-  const mcpDate = date.split("_")[0];
+  // Extract the date portion for MCP lookup (before any slug suffix).
+  // For significant memories, the suffix is the slug — without it, entity-core's
+  // findMemoryByDate returns the first file matching the date prefix, which is
+  // the wrong memory on dates with multiple significant entries.
+  const parts = date.split("_");
+  const mcpDate = parts[0];
+  const slug = granularity === "significant" && parts.length > 1
+    ? parts.slice(1).join("_")
+    : undefined;
 
   if (!ctx.mcpClient?.isConnected()) {
     return new Response(
@@ -3040,6 +3047,7 @@ export async function handleMemoriesEditorFragment(
     const entry = await ctx.mcpClient.readMemory(
       granularity as "daily" | "weekly" | "monthly" | "yearly" | "significant",
       mcpDate,
+      slug,
     );
 
     if (!entry) {

@@ -4,6 +4,33 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.12] - 2026-06-24
+
+### Fixed
+
+- Fixed a memory loading bug in the editor where GET handler for
+  `/fragments/settings/memories/:granularity/:date` stripped the slug before
+  calling `readMemory`, so entity-core fell into `findMemoryByDate` and returned
+  the first file matching the date prefix. On dates with multiple significant
+  memories, the editor loaded the wrong memory's body while showing the correct
+  title.
+
+### Changed
+
+- Added comprehensive voice pipeline diagnostic logging to trace audio flow from
+  mic capture through to STT output. Five new logging points: JS
+  `handleVoiceMessage` (daemon message types), JS `channel.onmessage` (frame
+  send counts), daemon binary frame reception (WS handler), daemon STT
+  lifecycle, and Rust tap block RMS audio level (detects silent capture). With
+  `voiceChatDebug` on, a single voice call shows exactly where audio dies in the
+  pipeline.
+- Added frame-send logging to `voice.js` to track dropped frames when `voiceWs`
+  isn't open yet and the first successful frame transmission to the WebSocket.
+  Logging is throttled to avoid drowning the console.
+- Restored the macOS mic permission check (authorizationStatus) before calling
+  `requestAccess` to skip redundant permission prompts on subsequent voice
+  calls.
+
 ## [Unreleased]
 
 ## [0.8.11] - 2026-06-21

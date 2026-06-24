@@ -55,6 +55,25 @@ cross-platform supervisors ship.
   for 48kHz, 44.1kHz, 32kHz, 24kHz, and 16kHz hardware formats. Also adds a
   defensive bounds check to skip empty buffers and avoid reading past the input.
 
+## [0.2.42] - 2026-06-24
+
+### Fixed
+
+- macOS mic permission prompt now appears only once (first voice call) instead
+  of every call. Restored the `authorizationStatus` check before `requestAccess`
+  — if macOS already reports "authorized" (status 3), skip the request and
+  return early without triggering the system permission prompt.
+
+### Changed
+
+- Added RMS audio level logging to the Rust tap block (every 100th frame) to
+  detect when mic capture is producing silence vs actual audio. 0.0 = dead
+  silence (wrong device or muted), ~0.05 = room noise, ~0.1+ = speech. This
+  catches "frames are flowing but mic isn't capturing" — the hardest issue to
+  diagnose without direct measurement. Uses `Arc<AtomicU32>` for the frame
+  counter since the tap closure must be `Fn` (not `FnMut`) and is called from
+  AVAudioEngine's render thread.
+
 ## [Unreleased]
 
 ## [0.2.37] - 2026-06-23

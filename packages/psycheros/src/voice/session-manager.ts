@@ -319,6 +319,16 @@ export class VoiceSessionManager {
         // (Only relevant for server-side STT modes; browser-native STT
         // sends transcripts as JSON, not audio.)
         if (!session.muted) {
+          // Diagnostic: log frame arrival (throttled — first 3 + every 100th)
+          const fc = (session as { _frameCount?: number })._frameCount ?? 0;
+          (session as { _frameCount?: number })._frameCount = fc + 1;
+          if (fc < 3 || fc % 100 === 0) {
+            console.log(
+              `[Voice:debug] binary frame #${
+                fc + 1
+              } received: ${event.data.byteLength} bytes`,
+            );
+          }
           session.pipeline.pushAudio(new Uint8Array(event.data));
           session.lastActivityAt = Date.now();
           this.resetIdleTimer(session, profile);

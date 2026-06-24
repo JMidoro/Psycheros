@@ -165,11 +165,26 @@ async function openVoiceChat(conversationId) {
         globalThis.appendVoiceDebug('mic-perm', 'Tauri detected — using native mic-capture plugin');
       }
       const channel = new TauriChannel('audio-frame');
+      let nativeFrameCount = 0;
+      let nativeDroppedCount = 0;
       channel.onmessage = (message) => {
-        if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
-        // message is an array of bytes (Vec<u8> from Rust). Wrap as
-        // Uint8Array buffer for binary WS send.
+        nativeFrameCount++;
+        if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) {
+          nativeDroppedCount++;
+          if (earlyVoiceChatDebug && globalThis.appendVoiceDebug && (nativeDroppedCount <= 3 || nativeDroppedCount % 50 === 0)) {
+            globalThis.appendVoiceDebug('tts', `frame dropped (ws not open) — dropped ${nativeDroppedCount}/${nativeFrameCount}`);
+          }
+          return;
+        }
         voiceWs.send(new Uint8Array(message).buffer);
+        if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
+          if (nativeFrameCount === 1) {
+            const bytes = Array.isArray(message) ? message.length : 0;
+            globalThis.appendVoiceDebug('tts', `first frame sent to WS: ${bytes} bytes`);
+          } else if (nativeFrameCount % 50 === 0) {
+            globalThis.appendVoiceDebug('tts', `${nativeFrameCount} frames sent to WS (${nativeDroppedCount} dropped)`);
+          }
+        }
       };
       try {
         await tauriInvoke('plugin:psycheros-mic-capture|start_capture', { onFrame: channel });
@@ -1361,6 +1376,7 @@ function connectVoiceWs(conversationId) {
 function handleVoiceMessage(data) {
   try {
     const msg = JSON.parse(data);
+    voiceDebug('ws-rx', `type=${msg.type}`);
     switch (msg.type) {
       case 'pong':
         break;

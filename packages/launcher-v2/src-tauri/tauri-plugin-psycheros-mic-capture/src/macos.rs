@@ -142,11 +142,52 @@ fn request_mic_permission() -> impl std::future::Future<Output = Result<bool, St
     use objc2_foundation::NSString;
 
     async move {
+        let media_type = NSString::from_str("soun");
+
+        // Check authorization status FIRST. If already authorized, skip
+        // the requestAccess call entirely. On some macOS Tahoe configs,
+        // requestAccess re-prompts the user even after permission was
+        // already granted — checking status and short-circuiting avoids
+        // the redundant prompt.
+        //
+        // Returns: 0=notDetermined, 1=restricted, 2=denied, 3=authorized
+        let pre_status: i32 = unsafe {
+            let cls = class!(AVCaptureDevice);
+            msg_send![cls, authorizationStatusForMediaType: &*media_type]
+        };
+        log_event(format!(
+            "[mic-capture] AVCaptureDevice authorization status: {}",
+            match pre_status {
+                0 => "notDetermined",
+                1 => "restricted",
+                2 => "denied",
+                3 => "authorized",
+                _ => "unknown",
+            }
+        ));
+
+        if pre_status == 3 {
+            // Already authorized — skip the prompt entirely.
+            return Ok(true);
+        }
+        if pre_status == 1 || pre_status == 2 {
+            // Restricted or denied — requestAccess won't re-prompt, just
+            // return the cached denial. Surface it to the caller.
+            return Err(format!(
+                "macOS mic permission is {} — open System Settings → Privacy & Security → Microphone to allow",
+                match pre_status {
+                    1 => "restricted (MDM or parental controls)",
+                    2 => "denied",
+                    _ => "blocked",
+                }
+            ));
+        }
+
+        // pre_status == 0 → notDetermined. requestAccess will prompt.
         let (tx, rx) = mpsc::sync_channel::<bool>(1);
         let handler = RcBlock::new(move |granted: Bool| {
             let _ = tx.send(granted.as_bool());
         });
-        let media_type = NSString::from_str("soun");
         unsafe {
             let cls = class!(AVCaptureDevice);
             let _: () = msg_send![
@@ -222,6 +263,14 @@ fn build_and_start_capture(
     // Linear-interpolate Float32 samples from hw_rate to 16kHz, convert
     // to Int16 PCM, ship via channel. Slightly more compute than raw
     // decimation but voice audio is low-volume so it's negligible.
+    //
+    // Frame counter via Arc<AtomicU32> so the Fn closure can track how
+    // many frames have been processed without needing FnMut. Every 100th
+    // frame, compute RMS level and log it — catches "capturing silence"
+    // issues (wrong mic device, muted hardware, dead AirPods battery, etc.)
+    // that would otherwise show frames flowing but no actual audio.
+    let frame_counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let fc = frame_counter.clone();
     let tap = RcBlock::new(
         move |buf: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
             let buffer = buf.as_ref();
@@ -231,13 +280,9 @@ fn build_and_start_capture(
             }
             let ch0_ptr = *buffer.floatChannelData();
             let sample_ptr = ch0_ptr.as_ptr();
-            // out_frames is the number of OUTPUT samples for 16kHz given
-            // this buffer's input frame count. floor() to avoid reading
-            // past the input buffer.
             let out_frames = ((frames as f64) / ratio).floor() as usize;
             let mut pcm: Vec<u8> = Vec::with_capacity(out_frames * 2);
             for i in 0..out_frames {
-                // Position in the input buffer for output sample i.
                 let src_pos = i as f64 * ratio;
                 let idx0 = src_pos.floor() as usize;
                 let idx1 = (idx0 + 1).min(frames - 1);
@@ -248,6 +293,26 @@ fn build_and_start_capture(
                 let clamped = sample.clamp(-1.0, 1.0);
                 let int16 = (clamped * 32767.0) as i16;
                 pcm.extend_from_slice(&int16.to_le_bytes());
+            }
+            // Periodic audio-level check. RMS 0.0 = dead silence, ~0.05 =
+            // quiet room noise, ~0.1+ = speech. If this shows 0.0 across
+            // multiple frames, the mic device is wrong or muted.
+            let count = fc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count % 100 == 0 {
+                let sum_sq: f64 = pcm.chunks_exact(2)
+                    .map(|c| {
+                        let v = i16::from_le_bytes([c[0], c[1]]) as f64 / 32768.0;
+                        v * v
+                    })
+                    .sum();
+                let n = (pcm.len() / 2).max(1);
+                let rms = (sum_sq / n as f64).sqrt();
+                log_event(format!(
+                    "[mic-capture] frame #{}: {} bytes, RMS={:.4}",
+                    count + 1,
+                    pcm.len(),
+                    rms
+                ));
             }
             let _ = on_frame.send(pcm);
         },
