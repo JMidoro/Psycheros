@@ -30,6 +30,19 @@ cross-platform supervisors ship.
   the exact AVAudioEngine method throwing the foreign ObjC exception. Purely
   additive — no behavioral change.
 
+## [0.2.40] - 2026-06-24
+
+### Fixed
+
+- macOS mic-capture no longer crashes on start. The crash log from 0.2.39
+  pinpointed the failure to `installTapOnBus_bufferSize_format_block` — Apple
+  throws `NSInvalidArgumentException` when the tap format doesn't match the
+  input node's output format. We were requesting 16kHz Float32 on a hardware
+  input node that runs at 48kHz. The fix queries the hardware's actual format
+  via `outputFormatForBus(0)` and decimates in Rust to ~16kHz (take every Nth
+  sample) — same algorithm the original JS path used. Mic capture now works on
+  all Macs regardless of native sample rate.
+
 ## [Unreleased]
 
 ## [0.2.37] - 2026-06-23

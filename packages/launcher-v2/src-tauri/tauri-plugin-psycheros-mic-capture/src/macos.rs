@@ -169,58 +169,70 @@ fn build_and_start_capture(
     use block2::RcBlock;
     use objc2::AnyThread;
     use objc2_avf_audio::{
-        AVAudioCommonFormat, AVAudioEngine, AVAudioFormat, AVAudioPCMBuffer, AVAudioTime,
+        AVAudioEngine, AVAudioFormat, AVAudioPCMBuffer, AVAudioTime,
     };
 
-    // AVAudioEngine::new() + inputNode() + AVAudioFormat init are all
+    // AVAudioEngine::new() + inputNode() + format setup are all
     // marked unsafe in objc2-avf-audio — single unsafe block for the
     // engine + format setup.
     log_event("[mic-capture] build_and_start_capture: before engine setup");
-    let (engine, input_node, format) = unsafe {
+    let (engine, input_node, format, hw_rate) = unsafe {
         log_event("[mic-capture] build: AVAudioEngine::new()");
         let engine = AVAudioEngine::new();
         log_event("[mic-capture] build: engine.inputNode()");
         let input_node = engine.inputNode();
-        // objc2 init methods on stable Rust are associated functions,
-        // not methods — `this: Allocated<Self>` is a positional arg,
-        // not a `self:` receiver. Call as `Type::init_name(allocated,
-        // ...args)`, NOT `allocated.init_name(...)`. Method syntax
-        // would need `unstable-arbitrary-self-types` (nightly).
-        // Returns Option<Retained<...>> (nil if params invalid);
-        // 1-channel mono won't fail but the type system needs .ok_or.
-        log_event("[mic-capture] build: AVAudioFormat::initWithCommonFormat_...");
-        let format = AVAudioFormat::initWithCommonFormat_sampleRate_channels_interleaved(
-            AVAudioFormat::alloc(),
-            AVAudioCommonFormat::PCMFormatFloat32,
-            16000.0,
-            1,
-            false,
-        )
-        .ok_or("failed to create 16kHz mono AVAudioFormat")?;
-        log_event("[mic-capture] build: engine + format ready");
-        (engine, input_node, format)
+        // Use the input node's ACTUAL hardware output format for the
+        // tap — Apple's installTap throws NSInvalidArgumentException
+        // if the tap format is incompatible with the node's output
+        // format. The previous attempt used a 16kHz Float32 format
+        // (to skip manual resampling), which doesn't match the typical
+        // 48kHz hardware format. The crash log confirmed this —
+        // installTap was the last call before SIGABRT.
+        //
+        // Solution: tap at the hardware format, then decimate in the
+        // tap block to get 16kHz Int16 output. Same algorithm the
+        // original JS code used (RESAMPLE_RATIO = 48000/16000 = 3).
+        log_event("[mic-capture] build: input_node.outputFormatForBus(0)");
+        let format = input_node.outputFormatForBus(0);
+        let hw_rate = format.sampleRate();
+        log_event(format!(
+            "[mic-capture] build: hardware format sampleRate={} channels={}",
+            hw_rate,
+            format.channelCount()
+        ));
+        (engine, input_node, format, hw_rate)
     };
 
+    // Compute decimation ratio. If the hardware runs at 48kHz, we take
+    // every 3rd sample to get 16kHz. For other rates (44.1kHz → 2.76x,
+    // doesn't divide cleanly; we still just take floor(N/3) samples
+    // which is close enough for voice). The JS path always used 3.
+    let decim: usize = if hw_rate >= 48000.0 {
+        3
+    } else if hw_rate >= 32000.0 {
+        2
+    } else {
+        1
+    };
+    log_event(format!(
+        "[mic-capture] build: decimation ratio = {} ({} → ~{}kHz)",
+        decim,
+        hw_rate as u32,
+        (hw_rate / decim as f64 / 1000.0).round() as u32
+    ));
+
     // Tap block: receives (AVAudioPCMBuffer *, AVAudioTime *).
-    // Convert Float32 → Int16 PCM and ship via the channel. RcBlock is
-    // heap-allocated and reference-counted — block2 0.6 has no
-    // Block::new constructor, only RcBlock::new and StackBlock::new.
-    //
-    // Inside the closure, every objc2 method on the buffer (as_ref,
-    // frameLength, floatChannelData) is itself unsafe — wrap each call.
+    // Convert Float32 → Int16 PCM, decimate to ~16kHz, ship via channel.
     let tap = RcBlock::new(
         move |buf: NonNull<AVAudioPCMBuffer>, _when: NonNull<AVAudioTime>| unsafe {
             let buffer = buf.as_ref();
             let frames = buffer.frameLength() as usize;
-            // floatChannelData returns a NonNull<NonNull<f32>> (one inner
-            // pointer per channel). Mono = single channel, so deref once
-            // to get the NonNull<f32> for channel 0. NonNull doesn't impl
-            // Deref — use .as_ptr() to get a real *const f32 first.
             let ch0_ptr = *buffer.floatChannelData();
             let sample_ptr = ch0_ptr.as_ptr();
-            let mut pcm: Vec<u8> = Vec::with_capacity(frames * 2);
-            for i in 0..frames {
-                let sample = *sample_ptr.add(i);
+            let out_frames = frames / decim;
+            let mut pcm: Vec<u8> = Vec::with_capacity(out_frames * 2);
+            for i in 0..out_frames {
+                let sample = *sample_ptr.add(i * decim);
                 let clamped = sample.clamp(-1.0, 1.0);
                 let int16 = (clamped * 32767.0) as i16;
                 pcm.extend_from_slice(&int16.to_le_bytes());
@@ -229,11 +241,6 @@ fn build_and_start_capture(
         },
     );
 
-    // installTapOnBus_bufferSize_format_block expects the block as a
-    // raw `*mut DynBlock<...>` pointer. RcBlock derefs to Block but not
-    // mutably, so &mut *tap won't compile. Use RcBlock::as_ptr(&tap)
-    // to get the canonical *mut Block<F> that coerces to the dyn-block
-    // pointer the API expects.
     unsafe {
         log_event("[mic-capture] build: installTapOnBus_bufferSize_format_block");
         input_node.installTapOnBus_bufferSize_format_block(
