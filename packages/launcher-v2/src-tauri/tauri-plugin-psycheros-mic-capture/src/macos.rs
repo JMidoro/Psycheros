@@ -27,6 +27,26 @@ use std::sync::Mutex;
 
 use tauri::{ipc::Channel, AppHandle, Runtime, State};
 
+/// File-based logger. macOS doesn't route stderr from Finder-launched GUI
+/// apps to Console.app by default (only os_log calls show up there), so
+/// eprintln! disappears into /dev/null when the user double-clicks the app.
+/// Writing to /tmp/psycheros-mic-capture.log lets us read the output after
+/// a crash via `cat /tmp/psycheros-mic-capture.log`.
+fn log_event(msg: impl AsRef<str>) {
+    use std::io::Write;
+    let msg = msg.as_ref();
+    let path = "/tmp/psycheros-mic-capture.log";
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{}", msg);
+    }
+    // Keep eprintln! as a backup for terminal-launched runs.
+    eprintln!("{}", msg);
+}
+
 /// Active capture session — engine + format, kept alive to sustain the tap.
 /// Stored as `Option<ActiveCapture>` inside `CaptureState`; `None` when
 /// capture isn't running.
@@ -57,10 +77,10 @@ pub async fn platform_start_capture<R: Runtime>(
     state: State<'_, CaptureState>,
     on_frame: Channel<Vec<u8>>,
 ) -> Result<(), String> {
-    eprintln!(
+    log_event(format!(
         "[mic-capture] start_capture thread: {:?}",
         std::thread::current().id()
-    );
+    ));
     // Reentrancy guard — if already active, refuse.
     {
         let guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
@@ -85,22 +105,22 @@ pub async fn platform_start_capture<R: Runtime>(
     let mut guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
     *guard = Some(active);
 
-    eprintln!("[mic-capture] start_capture complete");
+    log_event("[mic-capture] start_capture complete");
     Ok(())
 }
 
 pub fn platform_stop_capture(state: State<'_, CaptureState>) -> Result<(), String> {
-    eprintln!(
+    log_event(format!(
         "[mic-capture] stop_capture thread: {:?}",
         std::thread::current().id()
-    );
+    ));
     let mut guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
     if let Some(active) = guard.take() {
-        eprintln!("[mic-capture] stop_capture calling stop_engine_and_remove_tap");
+        log_event("[mic-capture] stop_capture calling stop_engine_and_remove_tap");
         stop_engine_and_remove_tap(active);
-        eprintln!("[mic-capture] stop_capture teardown returned");
+        log_event("[mic-capture] stop_capture teardown returned");
     } else {
-        eprintln!("[mic-capture] stop_capture no active session, nothing to do");
+        log_event("[mic-capture] stop_capture no active session, nothing to do");
     }
     Ok(())
 }
@@ -239,18 +259,21 @@ fn stop_engine_and_remove_tap(active: ActiveCapture) {
     //
     // inputNode() is marked unsafe in objc2-avf-audio — wrap the
     // whole teardown block so all calls are inside unsafe {}.
-    eprintln!("[mic-capture] stop_engine_and_remove_tap enter, thread: {:?}", std::thread::current().id());
-    eprintln!("[mic-capture] before engine.stop()");
+    log_event(format!(
+        "[mic-capture] stop_engine_and_remove_tap enter, thread: {:?}",
+        std::thread::current().id()
+    ));
+    log_event("[mic-capture] before engine.stop()");
     unsafe {
         active.engine.stop();
     }
-    eprintln!("[mic-capture] after engine.stop(), before inputNode()");
+    log_event("[mic-capture] after engine.stop(), before inputNode()");
     unsafe {
         let input_node = active.engine.inputNode();
-        eprintln!("[mic-capture] got input_node, before removeTapOnBus");
+        log_event("[mic-capture] got input_node, before removeTapOnBus");
         input_node.removeTapOnBus(0);
-        eprintln!("[mic-capture] after removeTapOnBus");
+        log_event("[mic-capture] after removeTapOnBus");
     }
-    eprintln!("[mic-capture] stop_engine_and_remove_tap returning, ActiveCapture about to drop");
+    log_event("[mic-capture] stop_engine_and_remove_tap returning, ActiveCapture about to drop");
     // ActiveCapture drops here, releasing the engine + format.
 }

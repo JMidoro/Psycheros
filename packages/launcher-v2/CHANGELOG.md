@@ -5,6 +5,20 @@ format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/). It is pre-1.0 until
 cross-platform supervisors ship.
 
+## [0.2.38] - 2026-06-23
+
+### Fixed
+
+- macOS mic-capture diagnostics now write to `/tmp/psycheros-mic-capture.log` in
+  addition to stderr. macOS doesn't route Finder-launched GUI app stderr to
+  Console.app (only `os_log` calls reach it), so the `eprintln!` tracing added
+  in 0.2.37 was invisible after double-click launches — it went to `/dev/null`.
+  A `std::panic::set_hook` installed in `run()` also records the panic message,
+  thread ID, and source location to the same file before the default abort
+  handler fires. macOS crash reports capture the abort but not the Rust panic
+  that triggered it; this hook fills that gap (foreign ObjC exceptions still
+  abort, but the hook runs first). Purely additive — no behavioral change.
+
 ## [Unreleased]
 
 ## [0.2.37] - 2026-06-23

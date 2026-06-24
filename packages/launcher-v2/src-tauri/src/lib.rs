@@ -224,6 +224,32 @@ pub fn smoke() -> i32 {
 /// double-clicked the .app or ran from a terminal), the window is shown
 /// at startup and the activation policy is Regular.
 pub fn run() {
+    // Install a panic hook that writes to /tmp/psycheros-mic-capture.log
+    // before the default abort handler fires. macOS crash reports don't
+    // capture the Rust panic message or ObjC exception details, so without
+    // this we're completely blind when a panic happens in production.
+    // Foreign (ObjC) exceptions still abort the process — Rust can't safely
+    // unwind through them — but the hook runs first and we get the message.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let path = "/tmp/psycheros-mic-capture.log";
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+        {
+            let _ = writeln!(
+                f,
+                "PANIC on thread {:?}: {}",
+                std::thread::current().id(),
+                info
+            );
+            let _ = writeln!(f, "location: {:?}", info.location());
+        }
+        default_hook(info);
+    }));
+
     let show_window_on_start = !std::env::args().any(|a| a == "--no-window");
 
     let builder = tauri::Builder::default()
