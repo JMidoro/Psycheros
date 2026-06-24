@@ -19,6 +19,17 @@ cross-platform supervisors ship.
   that triggered it; this hook fills that gap (foreign ObjC exceptions still
   abort, but the hook runs first). Purely additive — no behavioral change.
 
+## [0.2.39] - 2026-06-24
+
+### Fixed
+
+- macOS mic-capture diagnostics now include granular step-by-step logging at
+  every AVAudioEngine call in `start_capture`: permission request, engine
+  creation, input node, format setup, tap installation, prepare, and start. Each
+  step logs to `/tmp/psycheros-mic-capture.log` so crashes can be isolated to
+  the exact AVAudioEngine method throwing the foreign ObjC exception. Purely
+  additive — no behavioral change.
+
 ## [Unreleased]
 
 ## [0.2.37] - 2026-06-23

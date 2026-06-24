@@ -83,23 +83,29 @@ pub async fn platform_start_capture<R: Runtime>(
     ));
     // Reentrancy guard — if already active, refuse.
     {
+        log_event("[mic-capture] start_capture acquiring state lock");
         let guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
         if guard.is_some() {
             return Err("capture already active".to_string());
         }
+        log_event("[mic-capture] start_capture state lock OK");
     }
 
     // 1. Request mic permission via AVCaptureDevice.requestAccess — public
     //    API, triggers the system prompt on first call, returns the user's
     //    decision via the completion handler.
+    log_event("[mic-capture] start_capture calling request_mic_permission");
     let granted = request_mic_permission().await?;
+    log_event(format!("[mic-capture] request_mic_permission returned granted={}", granted));
     if !granted {
         return Err("Microphone permission denied".to_string());
     }
 
     // 2-5. Build engine, format, install tap, start. Synchronous because
     //      AVAudioEngine methods must be called from a single thread.
+    log_event("[mic-capture] start_capture calling build_and_start_capture");
     let active = build_and_start_capture(on_frame)?;
+    log_event("[mic-capture] build_and_start_capture returned");
 
     // 6. Stash in state.
     let mut guard = state.active.lock().map_err(|e| format!("state lock: {e}"))?;
@@ -169,8 +175,11 @@ fn build_and_start_capture(
     // AVAudioEngine::new() + inputNode() + AVAudioFormat init are all
     // marked unsafe in objc2-avf-audio — single unsafe block for the
     // engine + format setup.
+    log_event("[mic-capture] build_and_start_capture: before engine setup");
     let (engine, input_node, format) = unsafe {
+        log_event("[mic-capture] build: AVAudioEngine::new()");
         let engine = AVAudioEngine::new();
+        log_event("[mic-capture] build: engine.inputNode()");
         let input_node = engine.inputNode();
         // objc2 init methods on stable Rust are associated functions,
         // not methods — `this: Allocated<Self>` is a positional arg,
@@ -179,6 +188,7 @@ fn build_and_start_capture(
         // would need `unstable-arbitrary-self-types` (nightly).
         // Returns Option<Retained<...>> (nil if params invalid);
         // 1-channel mono won't fail but the type system needs .ok_or.
+        log_event("[mic-capture] build: AVAudioFormat::initWithCommonFormat_...");
         let format = AVAudioFormat::initWithCommonFormat_sampleRate_channels_interleaved(
             AVAudioFormat::alloc(),
             AVAudioCommonFormat::PCMFormatFloat32,
@@ -187,6 +197,7 @@ fn build_and_start_capture(
             false,
         )
         .ok_or("failed to create 16kHz mono AVAudioFormat")?;
+        log_event("[mic-capture] build: engine + format ready");
         (engine, input_node, format)
     };
 
@@ -224,16 +235,20 @@ fn build_and_start_capture(
     // to get the canonical *mut Block<F> that coerces to the dyn-block
     // pointer the API expects.
     unsafe {
+        log_event("[mic-capture] build: installTapOnBus_bufferSize_format_block");
         input_node.installTapOnBus_bufferSize_format_block(
             0,
             1024,
             Some(&format),
             RcBlock::as_ptr(&tap),
         );
+        log_event("[mic-capture] build: engine.prepare()");
         engine.prepare();
+        log_event("[mic-capture] build: engine.startAndReturnError()");
         // ObjC selector is -startAndReturnError: which objc2-avf-audio
         // maps to startAndReturnError() returning Result<(), NSError>.
         engine.startAndReturnError().map_err(|e| format!("engine.start: {e}"))?;
+        log_event("[mic-capture] build: engine started OK");
     }
 
     // RcBlock is already reference-counted — the engine retains the block
