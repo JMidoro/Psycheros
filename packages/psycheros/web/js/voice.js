@@ -136,24 +136,15 @@ async function openVoiceChat(conversationId) {
     }
   } catch {}
 
-  // FALLBACK: if the HTML config peek failed (STT defaulted to 'browser'),
-  // fetch from /api/voice/status which also returns sttProvider. This
-  // catches cases where the overlay HTML is malformed, the config element
-  // is missing, or JSON.parse fails — all of which would cause the voice
-  // call to skip native capture and fall through to getUserMedia (which
-  // doesn't work in WKWebView on macOS Tahoe).
+  // Fallback if the HTML config peek failed.
   if (earlySttProvider === 'browser') {
     try {
       const resp = await fetch('/api/voice/status', { headers: { 'Accept': 'application/json' } });
       if (resp.ok) {
         const s = await resp.json();
         if (s.sttProvider && s.sttProvider !== 'browser') {
-          // Log the recovery so we know the peek failed and we caught it.
           try {
-            await fetch('/api/voice/log', {
-              method: 'POST',
-              body: `HTML config peek failed — recovered STT=${s.sttProvider} from /api/voice/status`,
-            });
+            await fetch('/api/voice/log', { method: 'POST', body: `config peek failed — recovered STT=${s.sttProvider}` });
           } catch {}
           earlySttProvider = s.sttProvider;
         }
@@ -161,19 +152,10 @@ async function openVoiceChat(conversationId) {
     } catch {}
   }
 
-  // Unconditional diagnostic: log the voice call's critical parameters
-  // to the daemon stderr (via /api/voice/log) so we can see them in the
-  // launcher's View Logs regardless of debug flag state.
   try {
     await fetch('/api/voice/log', {
       method: 'POST',
-      body: JSON.stringify({
-        event: 'openVoiceChat',
-        stt: earlySttProvider,
-        tauri: !!window.__TAURI__?.core?.invoke,
-        channel: !!window.__TAURI__?.core?.Channel,
-        debug: earlyVoiceChatDebug,
-      }),
+      body: JSON.stringify({ event: 'openVoiceChat', stt: earlySttProvider, tauri: !!window.__TAURI__?.core?.invoke, channel: !!window.__TAURI__?.core?.Channel, debug: earlyVoiceChatDebug }),
     });
   } catch {}
 
@@ -190,15 +172,6 @@ async function openVoiceChat(conversationId) {
   // mode we skip getUserMedia entirely and the waveform stays empty.
   // Status text + STT event toasts carry the visual feedback instead.
   if (earlySttProvider !== 'browser') {
-    // Tauri macOS path: WKWebView on Tahoe (26) doesn't expose
-    // navigator.mediaDevices at all — getUserMedia is unreachable. The
-    // launcher ships a native mic-capture plugin that bypasses WebRTC
-    // entirely and streams Int16 PCM 16kHz mono frames to JS via a
-    // Tauri IPC Channel. We forward each frame to the voice WebSocket
-    // with voiceWs.send() — same binary protocol the existing
-    // onAudioProcess path uses.
-    //
-    // Browser mode (no __TAURI__) keeps the original getUserMedia path.
     const tauriInvoke = window.__TAURI__?.core?.invoke;
     const TauriChannel = window.__TAURI__?.core?.Channel;
     if (tauriInvoke && TauriChannel) {
@@ -218,6 +191,20 @@ async function openVoiceChat(conversationId) {
           return;
         }
         voiceWs.send(new Uint8Array(message).buffer);
+
+        // RMS for JS-side VAD (no analyserNode in native capture path).
+        if (Array.isArray(message)) {
+          let sumSq = 0;
+          const sampleCount = message.length >> 1;
+          for (let j = 0; j < message.length - 1; j += 2) {
+            let val = message[j] | (message[j + 1] << 8);
+            if (val > 32767) val -= 65536;
+            const n = val / 32768;
+            sumSq += n * n;
+          }
+          nativeRms = Math.sqrt(sumSq / Math.max(sampleCount, 1));
+        }
+
         if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
           if (nativeFrameCount === 1) {
             const bytes = Array.isArray(message) ? message.length : 0;
@@ -231,13 +218,8 @@ async function openVoiceChat(conversationId) {
         await tauriInvoke('plugin:psycheros-mic-capture|start_capture', { onFrame: channel });
         nativeCaptureActive = true;
         voiceDebug('capture', 'native capture started — frames flowing to channel');
-        // Unconditional diagnostic — tells us native capture succeeded even
-        // without debug flags on. Goes to daemon stderr via /api/voice/log.
         try {
-          await fetch('/api/voice/log', {
-            method: 'POST',
-            body: 'native capture started OK — frames flowing to channel',
-          });
+          await fetch('/api/voice/log', { method: 'POST', body: 'native capture started OK' });
         } catch {}
         if (earlyVoiceChatDebug && globalThis.appendVoiceDebug) {
           globalThis.appendVoiceDebug('mic-perm', 'native capture started');
@@ -245,7 +227,6 @@ async function openVoiceChat(conversationId) {
       } catch (err) {
         const detail = err && err.message ? err.message : String(err);
         showToast(`Mic capture failed: ${detail}`, 'warning');
-        // Unconditional diagnostic — tells us WHY it failed.
         try {
           await fetch('/api/voice/log', {
             method: 'POST',
@@ -330,11 +311,11 @@ async function openVoiceChat(conversationId) {
   // Show voice banner in chat
   showVoiceBanner(true);
 
+  // Connect WS before mic capture so frames aren't dropped while WS opens.
+  connectVoiceWs(conversationId);
+
   // Start audio pipeline (capture for server-side STT, analyser for VAD/waveform)
   setupAudioCapture();
-
-  // Connect WebSocket
-  connectVoiceWs(conversationId);
 
   // Start silence detector for non-PTT server-side STT modes
   if (!pttEnabled && sttProvider !== "browser") {
@@ -1046,13 +1027,10 @@ function startBrowserSTT(opts) {
 function startSilenceDetector() {
   const check = () => {
     if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
-    if (!analyserNode) return;
 
     // PTT mode: the user controls turn end via button release. Skip VAD
     // logic entirely so a mid-call toggle into PTT mode doesn't keep
-    // firing user_silence. Still clear any pending silenceTimer + reset
-    // isRecording so VAD starts clean when PTT is toggled back off. Loop
-    // keeps running so VAD resumes automatically on toggle-off.
+    // firing user_silence.
     if (pttEnabled) {
       if (silenceTimer) {
         clearTimeout(silenceTimer);
@@ -1063,19 +1041,23 @@ function startSilenceDetector() {
       return;
     }
 
-    const bufferLength = analyserNode.frequencyBinCount;
-    if (silenceLevel.length !== bufferLength) {
-      silenceLevel = new Uint8Array(bufferLength);
+    let rms;
+    if (nativeCaptureActive) {
+      rms = nativeRms;
+    } else {
+      if (!analyserNode) return;
+      const bufferLength = analyserNode.frequencyBinCount;
+      if (silenceLevel.length !== bufferLength) {
+        silenceLevel = new Uint8Array(bufferLength);
+      }
+      analyserNode.getByteTimeDomainData(silenceLevel);
+      let sumSq = 0;
+      for (let i = 0; i < silenceLevel.length; i++) {
+        const v = (silenceLevel[i] - 128) / 128;
+        sumSq += v * v;
+      }
+      rms = Math.sqrt(sumSq / silenceLevel.length);
     }
-    analyserNode.getByteTimeDomainData(silenceLevel);
-
-    // Compute RMS deviation from center (128)
-    let sumSq = 0;
-    for (let i = 0; i < silenceLevel.length; i++) {
-      const v = (silenceLevel[i] - 128) / 128;
-      sumSq += v * v;
-    }
-    const rms = Math.sqrt(sumSq / silenceLevel.length);
 
     if (rms > SILENCE_THRESHOLD) {
       // Voice activity — recording in progress
@@ -1298,6 +1280,9 @@ let ttsFrameCount = 0;
 // Tauri-detection branch in openVoiceChat, cleared by cleanup() calling
 // stop_capture. Browser mode never sets this.
 let nativeCaptureActive = false;
+
+// RMS from most recent native capture frame. Used by VAD when nativeCaptureActive.
+let nativeRms = 0;
 
 function queueAudioFrame(frame) {
   if (isDeafened) return;
