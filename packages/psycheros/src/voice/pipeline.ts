@@ -107,12 +107,11 @@ export class WalkieTalkieSession {
   /** Append audio data to the recording buffer (server-side STT only). */
   pushAudio(audio: Uint8Array): void {
     if (this._stopped) return;
-    if (this._state === "idle") {
-      this.setState("recording");
-    }
-    if (this._state === "recording") {
-      this.audioBuffer.push(audio);
-    }
+    // Buffer frames even before state transitions (e.g. VAD latency).
+    // State is set explicitly by ptt_start or user_speech_start.
+    // Don't auto-transition on first frame — that causes "Recording" UI
+    // to show immediately on call start instead of staying "Listening".
+    this.audioBuffer.push(audio);
   }
 
   /**

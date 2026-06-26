@@ -230,12 +230,6 @@ export interface VoiceSettings {
   activeProfileId: string | null;
   profiles: VoiceProfile[];
   /**
-   * Global push-to-talk toggle. When true, the voice overlay shows a
-   * hold-to-talk circle and the configured key bindings trigger PTT.
-   * When false, normal VAD / end-of-speech detection is used.
-   * Persists across calls — set once in settings or toggled mid-call.
-   */
-  pttEnabled: boolean;
   /**
    * Array of key bindings that trigger PTT hold/release. Each entry is
    * a KeyboardEvent.code (e.g., "Space", "KeyV", "MediaPlayPause") or
@@ -268,7 +262,6 @@ export function getDefaultVoiceSettings(): VoiceSettings {
     enabled: false,
     activeProfileId: null,
     profiles: [],
-    pttEnabled: false,
     pttKeys: ["Space"],
     voiceChatDebug: false,
   };
@@ -326,15 +319,9 @@ export async function loadVoiceSettings(
   try {
     const text = await Deno.readTextFile(settingsPath);
     const saved = JSON.parse(text) as Partial<VoiceSettings>;
-    // Migration: old settings files have per-profile pushToTalk but no
-    // top-level pttEnabled. Copy from the active profile on first load.
-    let pttEnabled = saved.pttEnabled;
-    if (pttEnabled === undefined) {
-      const activeProfile = (saved.profiles ?? []).find((p) =>
-        p.id === saved.activeProfileId
-      );
-      pttEnabled = (activeProfile as { pushToTalk?: boolean })?.pushToTalk ??
-        false;
+    // Migration: pttEnabled is now per-call only; remove if present from old saves.
+    if ("pttEnabled" in saved) {
+      delete saved.pttEnabled;
     }
     // Migration: voiceChatDebug used to live on VoiceProfile. If the
     // top-level field is unset, inherit from any profile that had it on
@@ -351,7 +338,6 @@ export async function loadVoiceSettings(
     return {
       ...defaults,
       ...saved,
-      pttEnabled,
       pttKeys: saved.pttKeys ?? defaults.pttKeys,
       voiceChatDebug,
       // Normalize each profile so newly-added fields get defaults

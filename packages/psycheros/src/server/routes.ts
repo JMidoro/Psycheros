@@ -10308,6 +10308,7 @@ export function handleVoiceWebSocket(
       profile,
       entityTurn,
       voiceSuffix,
+      false,
     );
 
     if ("error" in result) {
@@ -10380,7 +10381,7 @@ export function handleVoiceCallFragment(
   const html = renderVoiceCallView(
     conversationId,
     profile,
-    settings.pttEnabled ?? false,
+    false,
     settings.pttKeys ?? ["Space"],
     settings.voiceChatDebug ?? false,
   );

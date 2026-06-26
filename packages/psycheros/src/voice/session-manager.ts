@@ -43,6 +43,11 @@ export interface VoiceSession {
   startedAt: number;
   lastActivityAt: number;
   muted: boolean;
+  /** Server-side PTT hold state. Set by ptt_start/ptt_end messages.
+   *  When true + pttEnabled, audio frames are pushed to the pipeline. */
+  pttHolding: boolean;
+  /** Global PTT toggle from VoiceSettings (set at session creation). */
+  pttEnabled: boolean;
   /**
    * True when the browser has detected the start of user speech but the
    * corresponding finalized transcript hasn't arrived yet. Used to defer
@@ -118,6 +123,7 @@ export class VoiceSessionManager {
     profile: VoiceProfile,
     entityTurn: EntityTurn,
     voiceSuffix: string,
+    pttEnabled: boolean,
   ): { session: VoiceSession } | { error: string } {
     // Multi-device lock: reject if conversation already in voice
     const existingId = this.conversationLocks.get(conversationId);
@@ -145,6 +151,8 @@ export class VoiceSessionManager {
       startedAt: Date.now(),
       lastActivityAt: Date.now(),
       muted: false,
+      pttHolding: false,
+      pttEnabled: pttEnabled,
       userSpeaking: false,
       pendingPulses: [],
       idleTimer: null,
@@ -319,6 +327,16 @@ export class VoiceSessionManager {
         // (Only relevant for server-side STT modes; browser-native STT
         // sends transcripts as JSON, not audio.)
         if (!session.muted) {
+          // PTT mode: only accept audio while the user is holding the button.
+          // Without this gate, frames arriving before ptt_start (e.g. during
+          // the async config load race) push the pipeline into RECORDING state
+          // immediately on call start.
+          if (session.pttMode && !session.pttHolding) {
+            // Still reset idle timer so the session doesn't time out.
+            session.lastActivityAt = Date.now();
+            this.resetIdleTimer(session, profile);
+            return;
+          }
           // Diagnostic: log frame arrival (throttled — first 3 + every 100th)
           const fc = (session as { _frameCount?: number })._frameCount ?? 0;
           (session as { _frameCount?: number })._frameCount = fc + 1;
@@ -380,6 +398,7 @@ export class VoiceSessionManager {
         break;
 
       case "ptt_start":
+        session.pttHolding = true;
         // PTT pressed. For server-side STT mode, clear any audio that
         // accumulated between session start and this PTT press — only
         // audio during the hold should be transcribed. For browser STT
@@ -389,9 +408,11 @@ export class VoiceSessionManager {
           `[Voice:debug] ptt_start — buffer cleared (was ${session.pipeline.audioBufferLength()} bytes)`,
         );
         session.pipeline.clearAudioBuffer();
+        session.pipeline.setState("recording");
         break;
 
       case "ptt_end":
+        session.pttHolding = false;
         // PTT released — process accumulated audio.
         console.log(
           `[Voice:debug] ptt_end — processing ${session.pipeline.audioBufferLength()} bytes of audio`,
@@ -416,8 +437,9 @@ export class VoiceSessionManager {
         break;
 
       case "user_speech_start":
-        // Browser detected the start of user speech. Set the flag so the
-        // Pulse drainer defers — see maybeDrainPulse.
+        // Browser detected the start of user speech. Transition to recording
+        // state and set the flag so Pulse drainer defer — see maybeDrainPulse.
+        session.pipeline.setState("recording");
         session.userSpeaking = true;
         break;
 

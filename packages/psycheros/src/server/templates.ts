@@ -9222,7 +9222,6 @@ export function renderVoiceProfileEdit(
 export function renderVoiceCallView(
   conversationId: string,
   profile: VoiceProfile,
-  pttEnabled: boolean,
   pttKeys: string[],
   voiceChatDebug: boolean,
 ): string {
@@ -9285,7 +9284,6 @@ export function renderVoiceCallView(
       JSON.stringify({
         wsUrl: `/api/voice/ws?conversationId=${conversationId}`,
         sttProvider,
-        pttEnabled,
         pttKeys,
         endOfTurnSilence: profile.endOfTurnSilence ?? 1.5,
         phraseDebounceMs: profile.phraseDebounceMs ?? 1200,

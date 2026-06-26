@@ -147,7 +147,17 @@ async function openVoiceChat(conversationId) {
             await fetch('/api/voice/log', { method: 'POST', body: `config peek failed — recovered STT=${s.sttProvider}` });
           } catch {}
           earlySttProvider = s.sttProvider;
+          sttProvider = s.sttProvider;
         }
+        // Also recover PTT and other settings in case config peek failed
+        if (s.pttEnabled !== undefined) pttEnabled = !!s.pttEnabled;
+        if (Array.isArray(s.pttKeys)) pttKeys = s.pttKeys;
+        if (s.endOfTurnSilence !== undefined) endOfTurnSilence = s.endOfTurnSilence;
+        if (s.phraseDebounceMs !== undefined) phraseDebounceMs = s.phraseDebounceMs;
+        if (s.sttDebug !== undefined) sttDebug = !!s.sttDebug;
+        if (s.voiceChatDebug !== undefined) voiceChatDebug = !!s.voiceChatDebug;
+        if (s.sttLanguage !== undefined) sttLanguage = s.sttLanguage;
+        if (s.voiceEffect !== undefined) voiceEffect = s.voiceEffect;
       }
     } catch {}
   }
@@ -743,6 +753,10 @@ function buildVoiceEffectChain(ctx, effect) {
 
 function onAudioProcess(e) {
   if (isMuted || yinYangMode || !voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
+  // In PTT mode, only send audio while the button is held. Without this,
+  // frames flow continuously and the server's pipeline sees "audio arriving"
+  // → transitions to RECORDING immediately on call start.
+  if (pttEnabled && !pttHolding) return;
 
   const inputData = e.inputBuffer.getChannelData(0);
   const resampled = resample48000to16k(inputData);
@@ -1064,7 +1078,8 @@ function startSilenceDetector() {
       if (!analyserNode) {
         setTimeout(check, VAD_CHECK_INTERVAL_MS);
         return;
-      }
+}
+      nativePeakRms = 0;  // Reset peak after each VAD check in browser path too
       const bufferLength = analyserNode.frequencyBinCount;
       if (silenceLevel.length !== bufferLength) {
         silenceLevel = new Uint8Array(bufferLength);
@@ -1081,6 +1096,10 @@ function startSilenceDetector() {
     if (rms > SILENCE_THRESHOLD) {
       if (!isRecording) {
         isRecording = true;
+        // Tell server we've started speaking so it transitions to recording state
+        if (voiceWs && voiceWs.readyState === WebSocket.OPEN) {
+          voiceWs.send(JSON.stringify({ type: 'user_speech_start' }));
+        }
         try { fetch('/api/voice/log', { method: 'POST', body: `VAD: speech detected, RMS=${rms.toFixed(4)}, native=${nativeCaptureActive}` }); } catch {}
       }
       if (silenceTimer) {
@@ -1178,6 +1197,10 @@ function togglePTTMode() {
   const holdCircle = document.getElementById('voice-hold-circle');
   if (toggleBtn) toggleBtn.classList.toggle('voice-btn--active', pttEnabled);
   if (holdCircle) holdCircle.style.display = pttEnabled ? 'flex' : 'none';
+  // Notify server of PTT mode change
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ event: 'ptt_mode_changed', pttMode: pttEnabled }));
+  }
   // Blur the button so subsequent key presses (especially the configured
   // PTT keybind like Space) don't fall through to "activate focused
   // button" browser default behavior and re-toggle PTT. Same fix needed
@@ -1562,8 +1585,8 @@ function refreshDisplayState() {
     : pipelineState;
 
   const stateText = {
-    idle: pttEnabled ? 'Hold to talk' : 'Listening',
-    recording: 'Recording...',
+    idle: (pttEnabled || yinYangMode) ? 'Hold to talk' : 'Listening',
+    recording: pttEnabled ? 'Recording...' : 'Listening',
     processing: 'Thinking...',
     speaking: 'Speaking...',
   };
