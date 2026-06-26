@@ -4,6 +4,24 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.15] - 2026-06-25
+
+### Fixed
+
+- Voice-chat config `<script>` tags (sttProvider, pttEnabled, etc.) were
+  orphaned during fragment mounting — only the overlay `<div>` reached the DOM.
+  On mobile (Chrome Android) this silently fell back to browser STT instead of
+  the configured Deepgram provider, producing garbled transcriptions and sending
+  zero audio frames to the server. Desktop (Tauri) was unaffected. All fragment
+  children now mount correctly.
+- Silence detector (VAD) now starts when push-to-talk is toggled off mid-call
+  for server-side STT. Previously it only ran at call init when PTT was globally
+  off — so toggling PTT off after call start left the call stuck on RECORDING
+  indefinitely.
+- Silence detector check loop no longer dies when the voice WebSocket isn't open
+  yet. An early return cancelled rescheduling, leaving VAD dead for the entire
+  call until a full restart.
+
 ## [0.8.12] - 2026-06-24
 
 ### Fixed
@@ -970,6 +988,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 - Entity identity and memory served by the sibling `entity-core` MCP server,
   spawned as a subprocess when `PSYCHEROS_MCP_ENABLED=true`.
 
+[0.8.15]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.15
 [0.4.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.1
 [0.4.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.0
 [0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.3.3

@@ -284,12 +284,18 @@ async function openVoiceChat(conversationId) {
     }
   }
 
-  // Mount the overlay fragment we already loaded.
+  // Mount the overlay fragment we already loaded. Append ALL children,
+  // not just the first — the fragment includes <script> config tags
+  // (#voice-status-cfg with sttProvider, pttEnabled, etc.) as siblings
+  // after the overlay <div>. firstElementChild only grabs the <div>,
+  // leaving the config tags orphaned and sttProvider stuck at "browser".
   const chatEl = document.getElementById('chat');
   if (chatEl) {
     const container = document.createElement('div');
     container.innerHTML = loadedHtml;
-    document.body.appendChild(container.firstElementChild);
+    while (container.firstChild) {
+      document.body.appendChild(container.firstChild);
+    }
   }
 
   // Read config embedded by the server
@@ -539,6 +545,7 @@ function cleanup() {
       console.warn('[voice] stop_capture failed:', err);
     });
   }
+  silenceDetectorStarted = false;
 
   // Reset toast element references — the overlay (and everything inside
   // it) gets removed below, so these references would be stale.
@@ -1025,9 +1032,16 @@ function startBrowserSTT(opts) {
 // Silence Detection (VAD for default end-of-speech mode)
 // =============================================================================
 
+let silenceDetectorStarted = false;
+
 function startSilenceDetector() {
+  if (silenceDetectorStarted) return;
+  silenceDetectorStarted = true;
   const check = () => {
-    if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) return;
+    if (!voiceWs || voiceWs.readyState !== WebSocket.OPEN) {
+      setTimeout(check, VAD_CHECK_INTERVAL_MS);
+      return;
+    }
 
     // PTT mode: the user controls turn end via button release. Skip VAD
     // logic entirely so a mid-call toggle into PTT mode doesn't keep
@@ -1184,6 +1198,11 @@ function togglePTTMode() {
     // Leaving PTT mode — resume continuous STT if applicable
     if (sttProvider === 'browser' && recognition && !isMuted) {
       try { recognition.start(); } catch {}
+    }
+    // For server-side STT, start the silence detector if it hasn't been
+    // started yet (it's only started at call init when PTT is globally off).
+    if (sttProvider !== 'browser') {
+      startSilenceDetector();
     }
   }
   // Persist to server so it survives across calls
