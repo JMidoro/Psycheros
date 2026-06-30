@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.22] - 2026-06-30
+
+### Fixed
+
+- LLM: recover responses misrouted entirely into the reasoning field (empty
+  `content`, non-empty `reasoning`). Most commonly seen with GLM on OpenRouter,
+  where the provider occasionally routes both thinking and reply through the
+  `reasoning` delta. Without recovery the response was hidden inside the
+  thinking section and the edit fallback showed literal "▼ Thinking" UI labels
+  in the textarea. The loop now detects the misroute after the stream, splits at
+  the last boundary marker
+  (`</thinking>`/`</thought>`/`</reasoning>`/`</antml:thinking>`) if present, or
+  promotes reasoning to content when finish_reason=stop. A new
+  `thinking_corrected` SSE event resets the live UI; the edit fallback also
+  strips `.thinking`/`.tool` subtrees as defense-in-depth.
+
 ## [0.8.21] - 2026-06-29
 
 ### Fixed
@@ -1078,6 +1094,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 - Entity identity and memory served by the sibling `entity-core` MCP server,
   spawned as a subprocess when `PSYCHEROS_MCP_ENABLED=true`.
 
+[0.8.22]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.22
 [0.8.21]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.21
 [0.8.20]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.20
 [0.8.19]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.19

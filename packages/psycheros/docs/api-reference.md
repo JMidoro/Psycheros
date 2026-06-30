@@ -28,7 +28,10 @@ Event flow:
 Also emits `dom_update` events for UI changes triggered by tool execution, and
 `status` events for retry notifications and errors. The `message_id` event
 assigns database IDs to streaming-created DOM elements, enabling edit buttons
-without a page refresh.
+without a page refresh. A `thinking_corrected` event fires when the loop
+recovers a response that was misrouted entirely into the reasoning field (empty
+`content`, non-empty `reasoning`) — the frontend resets the thinking section and
+renders the recovered reply as assistant-text.
 
 ### Retry Stream (`POST /api/chat/retry`)
 

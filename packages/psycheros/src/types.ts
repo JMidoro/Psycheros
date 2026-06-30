@@ -117,7 +117,8 @@ export interface SSEEvent {
     | "context"
     | "done"
     | "message_id"
-    | "image_generated";
+    | "image_generated"
+    | "thinking_corrected";
   data: string;
 }
 

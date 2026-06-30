@@ -387,6 +387,18 @@ in priority order: `reasoning_content` (Z.ai), `reasoning`
 `type: "reasoning.text"`). Adding a new provider that returns reasoning in a
 different field means extending this chain.
 
+**Provider misroute recovery** in `EntityTurn.process()` (loop.ts, after the
+retry loop) catches the case where the entire response — thinking and reply both
+— was routed through the reasoning field with `content` empty. Most commonly
+seen with GLM on OpenRouter; Z.ai direct does not exhibit this. Without recovery
+the reply hides inside the thinking section and the edit fallback reads the
+rendered thinking section's text (literal "▼ Thinking" UI labels in the
+textarea). The recovery splits at the last boundary marker
+(`</thinking>`/`</thought>`/`</reasoning>`/`</antml:thinking>`) if present, or
+promotes the reasoning to content when `finish_reason=stop`. A
+`thinking_corrected` SSE event tells the live UI to reset thinking and render
+the recovered reply as assistant-text.
+
 `buildProviderHeaders()` adds provider-specific HTTP headers:
 
 - **OpenRouter**: `HTTP-Referer` + `X-Title` (required, or requests fail with
@@ -452,9 +464,9 @@ A state-change function returns `{ success, data, affectedRegions }`, and
   (`GET /api/events`).
 
 Two SSE channels exist. `POST /api/chat` is the per-request stream (message_id,
-context, thinking, content, tool_call, metrics, done) and its retry sibling
-`POST /api/chat/retry`. `GET /api/events` is the persistent channel for
-background updates and Pulse streaming.
+context, thinking, thinking_corrected, content, tool_call, metrics, done) and
+its retry sibling `POST /api/chat/retry`. `GET /api/events` is the persistent
+channel for background updates and Pulse streaming.
 
 ## Concurrency: three locks to know about
 

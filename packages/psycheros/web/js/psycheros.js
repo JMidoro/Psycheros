@@ -2324,6 +2324,58 @@ function handleSSEEvent(eventType, data, messageEl, state) {
       break;
     }
 
+    case 'thinking_corrected': {
+      // Provider misroute recovery — server detected that the entire response
+      // was streamed through the reasoning field. Clear the thinking section,
+      // optionally re-create it with just the residual thinking, and render
+      // the recovered reply as assistant-text so it's visible/editable.
+      try {
+        const correction = JSON.parse(data);
+
+        const existingThinking = contentContainer.querySelector('.thinking');
+        if (existingThinking) existingThinking.remove();
+        state.setThinking(null);
+
+        // Also clear any half-built assistant-text from earlier content chunks
+        // (shouldn't normally happen in the misroute case, but be safe).
+        if (state.getContent()) {
+          state.getContent().remove();
+          state.setContent(null);
+          state.setSegmentRaw('');
+        }
+
+        if (correction.thinking) {
+          const residual = document.createElement('div');
+          residual.className = 'thinking';
+          residual.innerHTML = `
+            <div class="thinking-header" onclick="this.parentElement.classList.toggle('expanded')">
+              <span class="thinking-toggle">&#9660;</span>
+              <span>Thinking</span>
+            </div>
+            <div class="thinking-content"></div>
+          `;
+          residual.querySelector('.thinking-content').textContent = correction.thinking;
+          contentContainer.insertBefore(residual, contentContainer.firstChild);
+          // Don't set state.thinking — next iteration's thinking chunks should
+          // create a fresh section rather than append to the residual.
+        }
+
+        if (correction.content) {
+          const contentEl = document.createElement('div');
+          contentEl.className = 'assistant-text';
+          contentContainer.appendChild(contentEl);
+          state.setContent(contentEl);
+          state.setSegmentRaw(correction.content);
+          renderFinalContent(contentEl, correction.content);
+        }
+
+        AutoScroll.streamTick();
+      } catch (e) {
+        console.error('Failed to handle thinking_corrected:', e);
+      }
+      break;
+    }
+
     case 'content': {
       // Clear retry indicator — upstream recovered
       const retryContent = contentContainer.querySelector('.status-retry');
@@ -4595,7 +4647,12 @@ function startMessageEdit(messageId) {
     // For regular user messages, target .msg-content
     targetEl = msgElement.querySelector('.discord-msg-text') || msgElement.querySelector('.msg-content');
     if (!targetEl) return;
-    originalContent = targetEl.dataset.rawContent || targetEl.textContent || '';
+    // Fallback path: read textContent, but explicitly exclude thinking/tool
+    // subtrees so the textarea never contains literal "▼ Thinking" UI text
+    // (defense-in-depth for the misroute case where .assistant-text is missing).
+    const clone = targetEl.cloneNode(true);
+    clone.querySelectorAll('.thinking, .tool').forEach(el => el.remove());
+    originalContent = targetEl.dataset.rawContent || clone.textContent || '';
   }
 
   // Store original content for cancel

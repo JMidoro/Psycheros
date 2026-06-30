@@ -1776,6 +1776,15 @@ function convertToSSEEvent(chunk: EntityYield): SSEEvent {
         data: chunk.finishReason,
       };
 
+    case "thinking_corrected":
+      return {
+        type: "thinking_corrected",
+        data: JSON.stringify({
+          thinking: chunk.thinking,
+          content: chunk.content,
+        }),
+      };
+
     case "message_id":
       return {
         type: "message_id",
