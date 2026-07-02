@@ -5911,6 +5911,10 @@ function renderLovenseTab(
       <div id="lovense-toys-list" style="display:none; margin-top: var(--sp-2);">
         <div class="lovense-toys-grid"></div>
       </div>
+      <details id="lovense-raw-response" style="display:none; margin-top: var(--sp-2);">
+        <summary style="cursor:pointer; font-size: 0.85rem; color: var(--c-fg-muted);">Raw API Response</summary>
+        <pre class="lovense-raw-pre" style="background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-md); padding: var(--sp-2); font-size: 0.75rem; line-height: 1.4; overflow-x: auto; max-height: 360px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;"></pre>
+      </details>
     </section>
 
     <!-- Custom Instructions -->
@@ -6000,6 +6004,8 @@ function renderLovenseTab(
       const btn = document.getElementById('lovense-test-btn');
       const statusEl = document.getElementById('lovense-test-status');
       const toysEl = document.getElementById('lovense-toys-list');
+      const rawEl = document.getElementById('lovense-raw-response');
+      const rawPre = rawEl?.querySelector('.lovense-raw-pre');
 
       if (!btn || !statusEl || !toysEl) return;
       btn.disabled = true;
@@ -6008,6 +6014,7 @@ function renderLovenseTab(
       statusEl.className = 'llm-status info';
       statusEl.textContent = 'Connecting to Lovense Connect via server...';
       toysEl.style.display = 'none';
+      if (rawEl) rawEl.style.display = 'none';
 
       const domain = document.getElementById('lovense-domain')?.value?.trim() ?? '';
       const port = parseInt(document.getElementById('lovense-port')?.value ?? '20010') || 20010;
@@ -6030,13 +6037,22 @@ function renderLovenseTab(
       })
         .then(r => r.json())
         .then(data => {
+          const showRaw = (payload) => {
+            if (rawEl && rawPre && payload != null) {
+              rawPre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+              rawEl.style.display = 'block';
+            }
+          };
           if (data.error) {
             statusEl.className = 'llm-status error';
             statusEl.textContent = data.error;
+            showRaw(data.raw);
             btn.disabled = false;
             btn.textContent = 'Test Connection';
             return;
           }
+
+          showRaw(data.raw);
 
           const toys = data.toys || [];
           const grid = toysEl.querySelector('.lovense-toys-grid');

@@ -365,6 +365,11 @@ no keyword triggers needed.
 - **Global** — available in every conversation
 - **Per-chat** — only searched in the matching conversation
 
+The entity-facing `vault` tool is global-only — scope selection is removed from
+its schema and hardcoded to `global`. The manager's data layer still supports
+per-chat documents (for any pre-existing ones and for future revival); the
+entity just can't create new chat-scoped docs through the tool.
+
 **Retrieval:**
 
 1. Every turn, the user message is embedded and compared against all vault

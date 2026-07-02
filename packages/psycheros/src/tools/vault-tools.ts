@@ -29,7 +29,7 @@ export const vaultTool: Tool = {
     function: {
       name: "vault",
       description:
-        "Manage documents in my Data Vault — create, read, append, rewrite, list, and search. I use this to store reference material, notes, or any persistent content I want to search later. Documents can be global (always available) or scoped to the current chat.\n\nOperations:\n- 'write': create a NEW document. Errors if a document with the same title already exists — use 'append' or 'rewrite' instead.\n- 'append': add content to an existing document (creates it if missing). This is the DEFAULT for adding information.\n- 'rewrite': DESTRUCTIVE — replaces the entire document content. Only use when existing content is actively wrong or redundant and needs to be removed, not just to reorganize.\n- 'read': get full document content.\n- 'list': see all documents.\n- 'search': find relevant content by semantic search.\n\nPrefer 'append' over 'rewrite' in almost all cases. 'rewrite' should only be used as a last resort.",
+        "Manage documents in my Data Vault — create, read, append, rewrite, list, and search. I use this to store reference material, notes, or any persistent content I want to search later. All vault documents are global — available across every chat.\n\nOperations:\n- 'write': create a NEW document. Errors if a document with the same title already exists — use 'append' or 'rewrite' instead.\n- 'append': add content to an existing document (creates it if missing). This is the DEFAULT for adding information.\n- 'rewrite': DESTRUCTIVE — replaces the entire document content. Only use when existing content is actively wrong or redundant and needs to be removed, not just to reorganize.\n- 'read': get full document content.\n- 'list': see all documents.\n- 'search': find relevant content by semantic search.\n\nPrefer 'append' over 'rewrite' in almost all cases. 'rewrite' should only be used as a last resort.",
       parameters: {
         type: "object",
         properties: {
@@ -49,12 +49,14 @@ export const vaultTool: Tool = {
             description:
               "Document content in markdown (for write, append, rewrite)",
           },
-          scope: {
-            type: "string",
-            enum: ["global", "chat", "all"],
-            description:
-              "Document scope. 'global' (all chats), 'chat' (this conversation), 'all' (list only, shows both). Default: 'global' for write/read/append/rewrite, 'all' for list.",
-          },
+          // Scope selection disabled — all vault documents are global. To revive,
+          // uncomment this block and restore the args.scope reads in each op below.
+          // scope: {
+          //   type: "string",
+          //   enum: ["global", "chat", "all"],
+          //   description:
+          //     "Document scope. 'global' (all chats), 'chat' (this conversation), 'all' (list only, shows both). Default: 'global' for write/read/append/rewrite, 'all' for list.",
+          // },
           query: {
             type: "string",
             description: "Search query (for search operation)",
@@ -140,7 +142,9 @@ async function executeWrite(
 ): Promise<ToolResult> {
   const title = args.title;
   const content = args.content;
-  const scope = (args.scope as "global" | "chat") || "global";
+  // Scope is locked to global. To revive chat/all scope, restore:
+  //   const scope = (args.scope as "global" | "chat") || "global";
+  const scope = "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -175,14 +179,14 @@ async function executeWrite(
     content.trim(),
     {
       scope,
-      conversationId: scope === "chat" ? ctx.conversationId : undefined,
+      // conversationId: scope === "chat" ? ctx.conversationId : undefined,
     },
   );
 
   return {
     toolCallId: ctx.toolCallId,
     content:
-      `Created vault document "${title.trim()}" (${result.chunkCount} chunks, ${scope} scope)`,
+      `Created vault document "${title.trim()}" (${result.chunkCount} chunks)`,
     isError: false,
   };
 }
@@ -193,7 +197,9 @@ async function executeRead(
   vaultManager: VaultManager,
 ): Promise<ToolResult> {
   const title = args.title;
-  const scope = (args.scope as "global" | "chat") || "global";
+  // Scope is locked to global. To revive:
+  //   const scope = (args.scope as "global" | "chat") || "global";
+  const scope = "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -210,7 +216,7 @@ async function executeRead(
   if (!existing) {
     return {
       toolCallId: _ctx.toolCallId,
-      content: `Document "${title.trim()}" not found in ${scope} scope.`,
+      content: `Document "${title.trim()}" not found.`,
       isError: true,
     };
   }
@@ -220,7 +226,7 @@ async function executeRead(
   return {
     toolCallId: _ctx.toolCallId,
     content:
-      `"${existing.title}" (${existing.scope}, ${existing.chunkCount} chunks):\n\n${content}`,
+      `"${existing.title}" (${existing.chunkCount} chunks):\n\n${content}`,
     isError: false,
   };
 }
@@ -232,7 +238,9 @@ async function executeAppend(
 ): Promise<ToolResult> {
   const title = args.title;
   const content = args.content;
-  const scope = (args.scope as "global" | "chat") || "global";
+  // Scope is locked to global. To revive:
+  //   const scope = (args.scope as "global" | "chat") || "global";
+  const scope = "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -259,13 +267,13 @@ async function executeAppend(
       content.trim(),
       {
         scope,
-        conversationId: scope === "chat" ? ctx.conversationId : undefined,
+        // conversationId: scope === "chat" ? ctx.conversationId : undefined,
       },
     );
     return {
       toolCallId: ctx.toolCallId,
       content:
-        `Created vault document "${title.trim()}" (${result.chunkCount} chunks, ${scope} scope)`,
+        `Created vault document "${title.trim()}" (${result.chunkCount} chunks)`,
       isError: false,
     };
   }
@@ -292,7 +300,9 @@ async function executeRewrite(
 ): Promise<ToolResult> {
   const title = args.title;
   const content = args.content;
-  const scope = (args.scope as "global" | "chat") || "global";
+  // Scope is locked to global. To revive:
+  //   const scope = (args.scope as "global" | "chat") || "global";
+  const scope = "global";
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return {
@@ -357,11 +367,14 @@ function executeList(
   }
 
   const lines = docs.map((d, i) => {
-    const scopeLabel = d.scope === "global" ? "[global]" : "[chat]";
+    // Scope label suppressed — scope selection is disabled, so showing
+    // [global]/[chat] tags would only invite questions about a scope the
+    // entity can no longer pick. Restore when scope selection is revived.
+    // const scopeLabel = d.scope === "global" ? "[global]" : "[chat]";
     const sourceLabel = d.source === "entity" ? "entity" : "upload";
     return `${
       i + 1
-    }. "${d.title}" ${scopeLabel} (${sourceLabel}, ${d.chunkCount} chunks, ${d.fileType})`;
+    }. "${d.title}" (${sourceLabel}, ${d.chunkCount} chunks, ${d.fileType})`;
   });
 
   return {

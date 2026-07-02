@@ -435,7 +435,11 @@ Supports two modes: LAN Mode (port 20010, HTTP) and Game Mode (port 34568 mobile
 dots). The `control_lovense` tool is auto-enabled when `enabled: true` and
 domain is set. `customInstructions` is injected into the entity's context as a
 `<lovense_preferences>` block inside situational awareness, but only when a
-Lovense device is actually connected. Settings page auto-reloads after save.
+Lovense device is actually connected. Settings page auto-reloads after save. The
+`/test` response includes a `raw` field (alongside `toys`) carrying the unparsed
+Lovense Connect payload — `apiCode`, the raw toys JSON string, and the parsed
+object — surfaced in a collapsible panel under the toy cards. For diagnosing
+cross-platform status-field quirks where `status === "1"` doesn't hold.
 
 ### Buttplug (Universal) Settings
 

@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.23] - 2026-07-02
+
+### Changed
+
+- Vault tool: scope selection removed from the entity-facing schema and
+  hardcoded to `global`. The `scope` parameter is commented out in
+  `src/tools/vault-tools.ts` for revival; the vault manager's data layer still
+  supports per-chat documents for backward compatibility. Stops the entity from
+  attempting to write chat-scoped docs that the rest of the system no longer
+  surfaces.
+- Lovense Test Connection now surfaces the raw GetToys API payload (`apiCode`,
+  unparsed toys JSON, parsed object) in a collapsible panel under the toy cards.
+  Aids diagnosing cross-platform `status`-field quirks where `status === "1"`
+  doesn't hold.
+
 ## [0.8.22] - 2026-06-30
 
 ### Fixed
@@ -1094,6 +1109,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 - Entity identity and memory served by the sibling `entity-core` MCP server,
   spawned as a subprocess when `PSYCHEROS_MCP_ENABLED=true`.
 
+[0.8.23]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.23
 [0.8.22]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.22
 [0.8.21]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.21
 [0.8.20]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.8.20
