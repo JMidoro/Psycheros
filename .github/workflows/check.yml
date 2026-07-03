@@ -7,7 +7,7 @@ on:
   #   - every <package>-v* tag push (last-chance type-check / lint / fmt
   #     gate before release.yml bundles + publishes — would have caught
   #     launcher-v0.2.0 shipping unrunnable due to a missing-sibling import)
-  #   - every PR targeting main (inbound contribution surface)
+  #   - every PR targeting main or feat/plugin-surface (inbound contribution surface)
   #   - workflow_dispatch (manual retry)
   #
   # Both jobs are repo-gated to PsycherosAI/Psycheros — on
@@ -23,7 +23,7 @@ on:
       - "entity-loom-v*"
       - "psycheros-v*"
   pull_request:
-    branches: [main]
+    branches: [main, feat/plugin-surface]
   workflow_dispatch:
 
 permissions:
